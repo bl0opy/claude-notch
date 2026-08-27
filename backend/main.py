@@ -7,8 +7,8 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.cartesia.tts import CartesiaTTSService
 from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
+from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
 from backend.bridge import NotchBridge
@@ -30,13 +30,11 @@ def build_stt() -> DeepgramFluxSTTService:
     )
 
 
-def build_tts() -> CartesiaTTSService:
-    return CartesiaTTSService(
-        api_key=config.cartesia_api_key,
-        settings=CartesiaTTSService.Settings(
-            voice=config.cartesia_voice_id,
-            model=config.cartesia_model,
-        ),
+def build_tts() -> DeepgramTTSService:
+    return DeepgramTTSService(
+        api_key=config.deepgram_api_key,
+        sample_rate=24000,
+        settings=DeepgramTTSService.Settings(voice=config.deepgram_voice),
     )
 
 

@@ -7,15 +7,15 @@ Claude Code does the actual work underneath.
 SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
   state / transcript                                Deepgram Flux (STT)
   stop button, ⌥Space                               claude -p (stream-json)
-                                                    Cartesia Sonic (TTS)
+                                                    Deepgram Aura-2 (TTS)
 ```
 
 ## Setup
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,cartesia,local,silero,webrtc]" websockets python-dotenv
-cp .env.example .env      # fill in DEEPGRAM_API_KEY and CARTESIA_API_KEY
+.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc]" websockets python-dotenv
+cp .env.example .env      # fill in DEEPGRAM_API_KEY
 ```
 
 `claude` must be on PATH and already logged in.
@@ -65,6 +65,8 @@ Shell → backend:
 
 ## Config
 
-All via `.env`: `DEEPGRAM_MODEL`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`, `CARTESIA_VOICE_ID`,
-`CARTESIA_MODEL`, `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`,
-`CANCEL_ON_INTERRUPT`, `WS_HOST`, `WS_PORT`.
+All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
+`CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `CANCEL_ON_INTERRUPT`,
+`WS_HOST`, `WS_PORT`.
+
+STT and TTS share one Deepgram key — no second vendor.
