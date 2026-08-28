@@ -29,9 +29,7 @@ struct NotchView: View {
                 .frame(width: 40, alignment: .leading)
                 .padding(.leading, 14)
             Spacer(minLength: geometry.notchWidth)
-            Text(state.phase.label)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color(white: 0.62))
+            ClaudeMark(phase: state.phase)
                 .frame(width: 40, alignment: .trailing)
                 .padding(.trailing, 14)
         }
