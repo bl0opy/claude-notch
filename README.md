@@ -32,6 +32,10 @@ Holding it while Claude is talking cuts it off. A tap of ⌘, or ⌘ as part of 
 shortcut, does nothing: it has to be held alone for 200 ms. Needs Accessibility
 permission. Set `PUSH_TO_TALK=0` for the old always-on mic.
 
+It speaks at most two sentences per turn (`SPOKEN_SENTENCES`) — the notch still
+shows the full answer. Permission questions are spoken as
+"I need your approval for deleting some files"; the actual command stays on screen.
+
 Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 
 ## Layout

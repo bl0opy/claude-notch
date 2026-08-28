@@ -97,7 +97,9 @@ async def run():
     )
     stt = build_stt()
     tts = build_tts()
-    brain = ClaudeCodeProcessor(session, bridge, config.cancel_on_interrupt, approvals)
+    brain = ClaudeCodeProcessor(
+        session, bridge, config.cancel_on_interrupt, approvals, config.spoken_sentences
+    )
 
     ptt = PushToTalkGate() if config.push_to_talk else None
 

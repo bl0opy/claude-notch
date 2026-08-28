@@ -43,6 +43,11 @@ class Config:
     mic_gate_tail_ms: int = field(
         default_factory=lambda: int(os.getenv("MIC_GATE_TAIL_MS", "250"))
     )
+    # How many sentences of a turn ever reach the speakers. The notch prints
+    # everything regardless.
+    spoken_sentences: int = field(
+        default_factory=lambda: int(os.getenv("SPOKEN_SENTENCES", "2"))
+    )
     eot_threshold: float = field(default_factory=lambda: float(os.getenv("EOT_THRESHOLD", "0.7")))
     eot_timeout_ms: int = field(default_factory=lambda: int(os.getenv("EOT_TIMEOUT_MS", "1500")))
     ws_host: str = field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))

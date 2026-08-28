@@ -30,6 +30,36 @@ RISKY_BASH = re.compile(
 )
 
 
+# What to call each risky call out loud. The notch still shows the real command;
+# this is the half-sentence that goes into "I need your approval for ___".
+SPOKEN = (
+    (re.compile(r"\brm\s+(-\w*\s+)*-\w*[rf]"), "deleting some files"),
+    (re.compile(r"\bgit\s+push"), "pushing to git"),
+    (re.compile(r"\bgit\s+(reset\s+--hard|clean|checkout\s+--\s|branch\s+-D)"), "throwing away local changes"),
+    (re.compile(r"\bnpm\s+publish"), "publishing a package"),
+    (re.compile(r"\b(pip\s+install|brew\s+(install|uninstall))"), "installing a package"),
+    (re.compile(r"\bcurl\b.*\|\s*(ba)?sh"), "running a script off the internet"),
+    (re.compile(r"\bsudo\b|\bchmod\s+777\b"), "a command that needs admin rights"),
+    (re.compile(r"\b(mkfs|dd\s+if=|shutdown|killall|launchctl)\b"), "a system-level command"),
+    (re.compile(r">\s*/(etc|usr|bin|sbin|System|Library)/"), "writing into a system folder"),
+)
+
+
+def spoken(tool: str, args: dict) -> str:
+    """The half-sentence said out loud — no commands, no paths, no URLs."""
+    if tool == "Bash":
+        command = args.get("command", "")
+        for pattern, phrase in SPOKEN:
+            if pattern.search(command):
+                return phrase
+        return "running a command"
+    if tool == "WebFetch":
+        return "fetching a web page"
+    if tool in ("Write", "Edit", "NotebookEdit"):
+        return "editing a file outside the project"
+    return f"a {tool} call"
+
+
 def risk(tool: str, args: dict, cwd: str) -> str:
     """Return a short reason this call needs a human, or '' to let it through."""
     if tool == "Bash":
@@ -80,7 +110,15 @@ def main():
         return
 
     try:
-        approved, note = ask({"tool": tool, "input": args, "reason": reason, "cwd": cwd})
+        approved, note = ask(
+            {
+                "tool": tool,
+                "input": args,
+                "reason": reason,
+                "summary": spoken(tool, args),
+                "cwd": cwd,
+            }
+        )
     except Exception:
         # Backend gone or not answering: don't wedge the turn, let Claude Code decide.
         return

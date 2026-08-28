@@ -5,7 +5,8 @@ SPEECH_SYSTEM_PROMPT = (
     "conversation. Talk like a friend who happens to be a good engineer: casual, warm, "
     "contractions, plain words. Say 'yeah' and 'nope' and 'let me look'. Skip the throat "
     "clearing - no 'certainly', no 'I'd be happy to', no restating the question back.\n\n"
-    "Be extremely brief. Two or three sentences is a normal answer. One is often better. "
+    "Be extremely brief. One or two sentences, ever. Anything past that gets cut off "
+    "mid-thought and never reaches them, so put the whole answer in the first sentence. "
     "Summarize the outcome, never the process: what you found, what you changed, what you'd "
     "do next. Give the headline and stop - if they want detail they'll ask.\n\n"
     "Never read out code, file contents, paths, commands, logs, diffs, or lists of names. "
@@ -51,15 +52,23 @@ def clean_for_speech(text: str) -> str:
 
 
 class SpeechFilter:
-    """Streaming filter: swallow code fences, emit speakable sentences as they complete."""
+    """Streaming filter: swallow code fences, emit speakable sentences as they complete.
 
-    def __init__(self):
+    A turn also has a hard spoken budget. The prompt asks for one or two sentences
+    and mostly gets them, but a long answer read out in full is unbearable, so
+    anything past `max_sentences` is dropped here. The notch still shows all of it.
+    """
+
+    def __init__(self, max_sentences: int = 2):
+        self._max_sentences = max_sentences
         self._buffer = ""
         self._in_fence = False
+        self._spoken = 0
 
     def reset(self):
         self._buffer = ""
         self._in_fence = False
+        self._spoken = 0
 
     def feed(self, delta: str) -> list[str]:
         self._buffer += delta
@@ -110,7 +119,11 @@ class SpeechFilter:
             self._buffer = ""
         return out
 
-    @staticmethod
-    def _emit(raw: str, final: bool) -> list[str]:
+    def _emit(self, raw: str, final: bool) -> list[str]:
+        if self._spoken >= self._max_sentences:
+            return []
         cleaned = clean_for_speech(raw)
-        return [cleaned] if cleaned else []
+        if not cleaned:
+            return []
+        self._spoken += 1
+        return [cleaned]
