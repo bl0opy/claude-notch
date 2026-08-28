@@ -14,6 +14,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
+from backend.mic_gate import MicGate
 from backend.config import config
 from backend.processor import ClaudeCodeProcessor
 from backend.speech import SPEECH_SYSTEM_PROMPT
@@ -82,7 +83,15 @@ async def run():
     tts = build_tts()
     brain = ClaudeCodeProcessor(session, bridge, config.cancel_on_interrupt)
 
-    pipeline = Pipeline([transport.input(), stt, brain, tts, transport.output()])
+    stages = [transport.input()]
+    if config.mic_gate:
+        stages.append(MicGate(config.mic_gate_tail_ms))
+        logger.info(f"mic gate on ({config.mic_gate_tail_ms} ms tail) — voice barge-in disabled")
+    else:
+        logger.info("mic gate off — expect the mic to hear the speakers unless you're on headphones")
+    stages += [stt, brain, tts, transport.output()]
+
+    pipeline = Pipeline(stages)
     task = PipelineTask(
         pipeline,
         params=PipelineParams(

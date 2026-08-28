@@ -80,6 +80,14 @@ as one rate. The built-in devices are natively 48 kHz, so nothing resamples at t
 device layer. The backend logs each device's native rate at startup and warns if
 it disagrees with the one you asked for.
 
+`MIC_GATE` (default 1) holds the mic shut while the agent talks, plus
+`MIC_GATE_TAIL_MS` (default 250) for the room to settle. The built-in mic hears
+the built-in speakers — measured at 3.5x room noise at moderate volume — and
+there is no echo canceller here, so an open mic makes Flux transcribe the
+agent's own voice, fire an interrupt, and set Claude Code answering itself in a
+loop. The cost is that voice barge-in stops working; Option-Space and the stop
+button still interrupt. Set `MIC_GATE=0` on headphones to get barge-in back.
+
 `TTS_SAMPLE_RATE` (default 24000) is the one deliberate exception: aura-2 is a
 24 kHz model, so 24 -> 48 kHz has to happen somewhere. Measured on one utterance,
 asking Deepgram for 48 kHz leaves 0.17% of total energy above 12 kHz — imaging

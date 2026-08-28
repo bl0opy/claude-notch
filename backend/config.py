@@ -33,6 +33,12 @@ class Config:
     # ignoring whatever interface is the current system default.
     input_device: str = field(default_factory=lambda: os.getenv("AUDIO_IN_DEVICE", ""))
     output_device: str = field(default_factory=lambda: os.getenv("AUDIO_OUT_DEVICE", ""))
+    # The built-in mic hears the built-in speakers and there's no echo canceller,
+    # so hold the mic shut while the agent talks. Turn off on headphones.
+    mic_gate: bool = field(default_factory=lambda: os.getenv("MIC_GATE", "1") == "1")
+    mic_gate_tail_ms: int = field(
+        default_factory=lambda: int(os.getenv("MIC_GATE_TAIL_MS", "250"))
+    )
     eot_threshold: float = field(default_factory=lambda: float(os.getenv("EOT_THRESHOLD", "0.7")))
     eot_timeout_ms: int = field(default_factory=lambda: int(os.getenv("EOT_TIMEOUT_MS", "1500")))
     ws_host: str = field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
