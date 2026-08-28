@@ -11,6 +11,7 @@ from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
+from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
 from backend.config import config
@@ -54,14 +55,27 @@ async def run():
         system_prompt=SPEECH_SYSTEM_PROMPT,
     )
 
+    rate = config.audio_sample_rate
+    in_index, in_name, in_native = resolve_device(config.input_device, want_input=True)
+    out_index, out_name, out_native = resolve_device(config.output_device, want_input=False)
+    logger.info(f"audio in: {in_name} @ {rate} Hz (device native {in_native})")
+    logger.info(f"audio out: {out_name} @ {rate} Hz (device native {out_native})")
+    for name, native in ((in_name, in_native), (out_name, out_native)):
+        if native and native != rate:
+            logger.warning(
+                f"{name} is native {native} Hz but we open it at {rate} Hz — "
+                f"CoreAudio will resample. set AUDIO_SAMPLE_RATE={native}"
+            )
+    logger.info(f"tts: {config.tts_sample_rate} Hz -> {rate} Hz via soxr")
+
     transport = LocalAudioTransport(
         LocalAudioTransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            audio_in_sample_rate=config.audio_in_sample_rate,
-            audio_out_sample_rate=config.audio_out_sample_rate,
-            input_device_index=config.input_device_index,
-            output_device_index=config.output_device_index,
+            audio_in_sample_rate=rate,
+            audio_out_sample_rate=rate,
+            input_device_index=in_index,
+            output_device_index=out_index,
         )
     )
     stt = build_stt()
@@ -72,8 +86,8 @@ async def run():
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            audio_in_sample_rate=config.audio_in_sample_rate,
-            audio_out_sample_rate=config.audio_out_sample_rate,
+            audio_in_sample_rate=rate,
+            audio_out_sample_rate=rate,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),

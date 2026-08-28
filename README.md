@@ -69,4 +69,22 @@ All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOU
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `CANCEL_ON_INTERRUPT`,
 `WS_HOST`, `WS_PORT`.
 
+### Audio
+
+`AUDIO_IN_DEVICE` / `AUDIO_OUT_DEVICE` take a device name substring or a pyaudio
+index. Left empty they pin the MacBook built-in mic and speakers by name, so a
+connected interface never gets picked up just because it is the system default.
+
+`AUDIO_SAMPLE_RATE` (default 48000) drives the mic, the speakers and the pipeline
+as one rate. The built-in devices are natively 48 kHz, so nothing resamples at the
+device layer. The backend logs each device's native rate at startup and warns if
+it disagrees with the one you asked for.
+
+`TTS_SAMPLE_RATE` (default 24000) is the one deliberate exception: aura-2 is a
+24 kHz model, so 24 -> 48 kHz has to happen somewhere. Measured on one utterance,
+asking Deepgram for 48 kHz leaves 0.17% of total energy above 12 kHz — imaging
+junk above the model's own Nyquist, which is what reads as harsh. Rendering
+native and resampling locally through pipecat's soxr VHQ leaves 0.00000% up
+there, so that is the default.
+
 STT and TTS share one Deepgram key — no second vendor.
