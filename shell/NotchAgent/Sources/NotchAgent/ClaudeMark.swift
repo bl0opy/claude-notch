@@ -59,7 +59,10 @@ struct ClaudeMark: View {
 
     var body: some View {
         CrabSprite(tint: tint, cell: 2)
-            .phaseAnimator([0, 1, 2], trigger: isThinking) { view, step in
+            // No `trigger:` here — that variant runs the sequence once per change.
+            // The plain one cycles forever, and the offsets flatten to zero
+            // whenever Claude isn't thinking, so he simply sits still.
+            .phaseAnimator([0, 1, 2]) { view, step in
                 view
                     .offset(y: isThinking ? hopOffset(step) : 0)
                     .scaleEffect(
@@ -68,7 +71,8 @@ struct ClaudeMark: View {
                         anchor: .bottom
                     )
             } animation: { step in
-                guard isThinking else { return .easeOut(duration: 0.18) }
+                // Idle slowly when he's not hopping so we're not animating nothing.
+                guard isThinking else { return .linear(duration: 0.5) }
                 // Crouch, spring up, land.
                 switch step {
                 case 0: return .easeOut(duration: 0.13)

@@ -19,7 +19,7 @@ struct NotchView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: state.expanded)
         .animation(.easeOut(duration: 0.18), value: state.phase)
         .onHover { hovering in
-            state.expanded = hovering
+            state.hovering = hovering
         }
     }
 
@@ -44,21 +44,14 @@ struct NotchView: View {
         VStack(alignment: .leading, spacing: 12) {
             if !state.userTranscript.isEmpty {
                 FieldBlock(title: "you", text: state.userTranscript, color: Color(white: 0.85))
+                    .frame(maxHeight: 54)
             }
             if !state.assistantText.isEmpty {
                 FieldBlock(title: "claude", text: state.assistantText, color: Color(white: 0.72))
                     .frame(maxHeight: 180)
             }
-            if !state.tools.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(state.tools) { tool in
-                        Text(tool.name.lowercased())
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .padding(.horizontal, 7).padding(.vertical, 3)
-                            .background(Capsule().fill(Color(white: 0.16)))
-                            .foregroundStyle(Color(white: 0.66))
-                    }
-                }
+            if !state.tools.isEmpty || state.phase == .thinking {
+                ActivityFeed(tools: state.tools, working: state.phase == .thinking)
             }
             if !state.lastError.isEmpty {
                 Text(state.lastError)
@@ -82,9 +75,11 @@ struct NotchView: View {
                         .foregroundStyle(Color(white: 0.4))
                 }
             }
+            Spacer(minLength: 0)
         }
         .padding(16)
         .frame(width: 460, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(Color(white: 0.06))
@@ -94,6 +89,93 @@ struct NotchView: View {
                 )
         )
         .padding(.top, 6)
+    }
+}
+
+/// What Claude is doing right now, in the shape Claude Code prints it:
+/// a status dot, the tool name, and the one argument that identifies the call.
+private struct ActivityFeed: View {
+    let tools: [ToolEvent]
+    let working: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("activity")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(white: 0.38))
+                .textCase(.uppercase)
+                .padding(.bottom, 6)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(tools) { tool in
+                            ActivityRow(tool: tool).id(tool.id)
+                        }
+                        if working {
+                            WorkingRow().id(Self.workingRowID)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollIndicators(.never)
+                .frame(maxHeight: 108)
+                .onChange(of: tools.count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo(working ? Self.workingRowID : tools.last?.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private static let workingRowID = "__working__"
+}
+
+private struct ActivityRow: View {
+    let tool: ToolEvent
+
+    private var dotColor: Color {
+        switch tool.status {
+        case .running: return AgentPhase.thinking.tint
+        case .done: return Color(red: 0.36, green: 0.85, blue: 0.55)
+        case .failed: return AgentPhase.error.tint
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            Circle()
+                .fill(dotColor)
+                .frame(width: 5, height: 5)
+                .padding(.top, 4)
+            Text(tool.name).foregroundStyle(Color(white: 0.84))
+                + Text(tool.detail.isEmpty ? "" : "(\(tool.detail))")
+                    .foregroundStyle(Color(white: 0.46))
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .lineLimit(2)
+        .truncationMode(.middle)
+    }
+}
+
+/// The tail of the feed while a turn is still in flight.
+private struct WorkingRow: View {
+    @State private var on = false
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(AgentPhase.thinking.tint)
+                .frame(width: 5, height: 5)
+                .opacity(on ? 0.25 : 1)
+            Text("working")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color(white: 0.46))
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) { on = true }
+        }
     }
 }
 

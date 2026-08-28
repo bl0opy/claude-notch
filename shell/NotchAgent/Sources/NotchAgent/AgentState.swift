@@ -27,9 +27,14 @@ enum AgentPhase: String {
 }
 
 struct ToolEvent: Identifiable {
-    let id = UUID()
+    enum Status { case running, done, failed }
+
+    /// Claude Code's own tool_use id, so the matching tool_result can find this row.
+    let id: String
     let name: String
     let summary: String
+    let detail: String
+    var status: Status = .running
 }
 
 @MainActor
@@ -40,7 +45,11 @@ final class AgentState: ObservableObject {
     @Published var tools: [ToolEvent] = []
     @Published var sessionCwd: String = ""
     @Published var lastError: String = ""
-    @Published var expanded: Bool = false
+    @Published var hovering: Bool = false
+
+    /// The panel opens on hover, and on its own while Claude is working so the
+    /// activity feed is visible without having to park the cursor up there.
+    var expanded: Bool { hovering || phase == .thinking }
 
     private var client: BridgeClient?
 
@@ -65,9 +74,18 @@ final class AgentState: ObservableObject {
         case "assistant_done":
             if let text = message["text"] as? String, !text.isEmpty { assistantText = text }
         case "tool":
-            let name = message["name"] as? String ?? "tool"
-            tools.append(ToolEvent(name: name, summary: message["summary"] as? String ?? ""))
-            if tools.count > 6 { tools.removeFirst() }
+            let event = ToolEvent(
+                id: message["id"] as? String ?? UUID().uuidString,
+                name: message["name"] as? String ?? "tool",
+                summary: message["summary"] as? String ?? "",
+                detail: message["detail"] as? String ?? ""
+            )
+            tools.append(event)
+            if tools.count > 8 { tools.removeFirst() }
+        case "tool_result":
+            guard let id = message["id"] as? String,
+                  let index = tools.firstIndex(where: { $0.id == id }) else { return }
+            tools[index].status = (message["ok"] as? Bool ?? true) ? .done : .failed
         case "session":
             sessionCwd = message["cwd"] as? String ?? ""
         case "error":
