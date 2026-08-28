@@ -11,11 +11,12 @@ from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
+from backend.approvals import ApprovalServer
 from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
 from backend.mic_gate import MicGate
-from backend.config import config
+from backend.config import ROOT, config
 from backend.processor import ClaudeCodeProcessor
 from backend.speech import SPEECH_SYSTEM_PROMPT
 
@@ -49,11 +50,25 @@ async def run():
     bridge = NotchBridge(config.ws_host, config.ws_port)
     await bridge.start()
 
+    approvals = ApprovalServer(config.ws_host, config.approval_port, config.approval_timeout_s)
+    await approvals.start()
+
+    hook = ROOT / "hooks" / "approve.py"
     session = ClaudeCodeSession(
         cwd=config.claude_cwd,
         model=config.claude_model,
         permission_mode=config.permission_mode,
         system_prompt=SPEECH_SYSTEM_PROMPT,
+        settings={
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [{"type": "command", "command": f"{sys.executable} {hook}"}],
+                    }
+                ]
+            }
+        },
     )
 
     rate = config.audio_sample_rate
@@ -81,7 +96,7 @@ async def run():
     )
     stt = build_stt()
     tts = build_tts()
-    brain = ClaudeCodeProcessor(session, bridge, config.cancel_on_interrupt)
+    brain = ClaudeCodeProcessor(session, bridge, config.cancel_on_interrupt, approvals)
 
     stages = [transport.input()]
     if config.mic_gate:
@@ -110,11 +125,16 @@ async def run():
         if text:
             await brain.send_text_turn(text)
 
+    async def on_approve(msg):
+        await brain.resolve_approval(bool(msg.get("approved")), "from the notch")
+
     async def on_say(msg):
         text = (msg.get("text") or "").strip()
         if text:
             await task.queue_frame(TTSSpeakFrame(text))
 
+    approvals.on_ask(brain.ask_approval)
+    bridge.on("approve", on_approve)
     bridge.on("interrupt", on_interrupt)
     bridge.on("text", on_text)
     bridge.on("say", on_say)
@@ -123,6 +143,7 @@ async def run():
     try:
         await runner.run(task)
     finally:
+        await approvals.stop()
         await bridge.stop()
         await session.stop()
     return 0

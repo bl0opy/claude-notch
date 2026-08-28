@@ -50,6 +50,9 @@ struct NotchView: View {
                 FieldBlock(title: "claude", text: state.assistantText, color: Color(white: 0.72))
                     .frame(maxHeight: 180)
             }
+            if let request = state.approval {
+                ApprovalCard(request: request) { state.answerApproval($0) }
+            }
             if !state.tools.isEmpty || state.phase == .thinking {
                 ActivityFeed(tools: state.tools, working: state.phase == .thinking)
             }
@@ -89,6 +92,57 @@ struct NotchView: View {
                 )
         )
         .padding(.top, 6)
+    }
+}
+
+/// The permission question, with the two buttons. Saying "yeah" or "nope" does
+/// the same thing — this is here for when talking isn't convenient.
+private struct ApprovalCard: View {
+    let request: ApprovalRequest
+    let answer: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Text("needs your ok")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(AgentPhase.waiting.tint)
+                .textCase(.uppercase)
+
+            Text(request.reason.isEmpty ? request.tool : request.reason)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Color(white: 0.86))
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                answerButton("approve", tint: Color(red: 0.36, green: 0.85, blue: 0.55)) { answer(true) }
+                answerButton("deny", tint: Color(white: 0.55)) { answer(false) }
+                Spacer()
+                Text("or just say yeah / nope")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.38))
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(white: 0.11))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(AgentPhase.waiting.tint.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
+    private func answerButton(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .padding(.horizontal, 12).padding(.vertical, 5)
+                .background(Capsule().fill(tint.opacity(0.22)))
+                .foregroundStyle(tint)
+        }
+        .buttonStyle(.plain)
     }
 }
 

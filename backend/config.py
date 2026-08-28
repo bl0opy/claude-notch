@@ -45,7 +45,11 @@ class Config:
     ws_port: int = field(default_factory=lambda: int(os.getenv("WS_PORT", "8765")))
     claude_cwd: str = field(default_factory=lambda: os.getenv("CLAUDE_CWD", str(Path.cwd())))
     claude_model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", ""))
-    permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "acceptEdits"))
+    permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "auto"))
+    approval_port: int = field(default_factory=lambda: int(os.getenv("APPROVAL_PORT", "8766")))
+    approval_timeout_s: float = field(
+        default_factory=lambda: float(os.getenv("APPROVAL_TIMEOUT_S", "180"))
+    )
     cancel_on_interrupt: bool = field(
         default_factory=lambda: os.getenv("CANCEL_ON_INTERRUPT", "1") == "1"
     )

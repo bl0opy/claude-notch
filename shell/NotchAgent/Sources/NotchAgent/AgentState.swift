@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum AgentPhase: String {
-    case idle, listening, thinking, speaking, error, disconnected
+    case idle, listening, thinking, speaking, waiting, error, disconnected
 
     var label: String {
         switch self {
@@ -10,6 +10,7 @@ enum AgentPhase: String {
         case .listening: return "listening"
         case .thinking: return "thinking"
         case .speaking: return "speaking"
+        case .waiting: return "waiting on you"
         case .error: return "error"
         case .disconnected: return "offline"
         }
@@ -21,9 +22,17 @@ enum AgentPhase: String {
         case .listening: return Color(red: 0.36, green: 0.85, blue: 0.55)
         case .thinking: return Color(red: 0.98, green: 0.78, blue: 0.32)
         case .speaking: return Color(red: 0.40, green: 0.68, blue: 1.0)
+        case .waiting: return Color(red: 0.98, green: 0.62, blue: 0.28)
         case .error: return Color(red: 1.0, green: 0.38, blue: 0.38)
         }
     }
+}
+
+/// A tool call parked on the user's answer, mirrored from the PreToolUse hook.
+struct ApprovalRequest: Identifiable {
+    let id: String
+    let tool: String
+    let reason: String
 }
 
 struct ToolEvent: Identifiable {
@@ -45,11 +54,12 @@ final class AgentState: ObservableObject {
     @Published var tools: [ToolEvent] = []
     @Published var sessionCwd: String = ""
     @Published var lastError: String = ""
+    @Published var approval: ApprovalRequest?
     @Published var hovering: Bool = false
 
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
-    var expanded: Bool { hovering || phase == .thinking }
+    var expanded: Bool { hovering || phase == .thinking || approval != nil }
 
     private var client: BridgeClient?
 
@@ -73,6 +83,14 @@ final class AgentState: ObservableObject {
             assistantText += message["text"] as? String ?? ""
         case "assistant_done":
             if let text = message["text"] as? String, !text.isEmpty { assistantText = text }
+        case "approval":
+            approval = ApprovalRequest(
+                id: message["id"] as? String ?? "",
+                tool: message["tool"] as? String ?? "tool",
+                reason: message["reason"] as? String ?? ""
+            )
+        case "approval_closed":
+            approval = nil
         case "tool":
             let event = ToolEvent(
                 id: message["id"] as? String ?? UUID().uuidString,
@@ -97,5 +115,9 @@ final class AgentState: ObservableObject {
     }
 
     func interrupt() { client?.send(["type": "interrupt"]) }
+    func answerApproval(_ approved: Bool) {
+        client?.send(["type": "approve", "approved": approved])
+        approval = nil
+    }
     func send(text: String) { client?.send(["type": "text", "text": text]) }
 }

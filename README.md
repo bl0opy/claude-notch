@@ -69,6 +69,23 @@ All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOU
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `CANCEL_ON_INTERRUPT`,
 `WS_HOST`, `WS_PORT`.
 
+### Approvals
+
+`CLAUDE_PERMISSION_MODE` defaults to `auto`. A `PreToolUse` hook (`hooks/approve.py`)
+gates the risky minority — `rm -rf`, `sudo`, `git push`/`reset --hard`, package
+installs, writes outside the project, `WebFetch` — and lets everything else through
+so auto mode stays quiet. When it fires, the agent asks out loud and the notch shows
+Approve/Deny; saying "yeah" or "nope" answers it, and so does the button.
+`APPROVAL_TIMEOUT_S` (default 180) denies on silence so a turn can't wedge.
+
+Edit `RISKY_BASH` and `risk()` in `hooks/approve.py` to change what gets gated.
+
+One limit worth knowing: the hook can *veto* a tool call, but a hook `allow`
+does not override Claude Code's own refusals. Verified against the CLI: approving
+a call the CLI already permits runs it, and denying blocks it — but approving
+something the CLI itself refuses in headless mode (`rm -rf`, for one) still won't
+run it, in any permission mode. Claude Code keeps the final say.
+
 ### Audio
 
 `AUDIO_IN_DEVICE` / `AUDIO_OUT_DEVICE` take a device name substring or a pyaudio

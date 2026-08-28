@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 
 from loguru import logger
 from pipecat.frames.frames import (
@@ -16,6 +17,7 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from backend.approvals import ApprovalServer
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
 from backend.speech import SpeechFilter
@@ -49,6 +51,32 @@ _TOOL_ARGS = {
 }
 
 
+_YES = {"yes","yeah","yep","yup","sure","ok","okay","go","go ahead","do it","approve",
+        "approved","allow","fine","please do","affirmative","sounds good","confirm"}
+_NO = {"no","nope","nah","stop","don't","dont","cancel","deny","denied","reject","abort",
+       "negative","skip","never mind","nevermind"}
+
+
+def hears_approval(text: str) -> bool | None:
+    """yes/no from a spoken reply, or None if it isn't an answer either way."""
+    words = re.findall(r"[a-z']+", text.lower())
+    if not words:
+        return None
+    phrase = " ".join(words)
+    # Check the leading words first — "no, wait" is a no even though it's long.
+    for n in (3, 2, 1):
+        head = " ".join(words[:n])
+        if head in _NO:
+            return False
+        if head in _YES:
+            return True
+    if any(w in _NO for w in words) and not any(w in _YES for w in words):
+        return False
+    if any(w in _YES for w in words) and not any(w in _NO for w in words):
+        return True
+    return None
+
+
 def _tool_detail(name: str, args: dict) -> str:
     """One-line argument summary, paths shortened to a basename."""
     keys = _TOOL_ARGS.get(name) or tuple(args)[:1]
@@ -70,10 +98,17 @@ class ClaudeCodeProcessor(FrameProcessor):
     to the notch shell over the bridge.
     """
 
-    def __init__(self, session: ClaudeCodeSession, bridge: NotchBridge, cancel_on_interrupt: bool):
+    def __init__(
+        self,
+        session: ClaudeCodeSession,
+        bridge: NotchBridge,
+        cancel_on_interrupt: bool,
+        approvals: ApprovalServer | None = None,
+    ):
         super().__init__()
         self._session = session
         self._bridge = bridge
+        self._approvals = approvals
         self._cancel_on_interrupt = cancel_on_interrupt
         self._filter = SpeechFilter()
         self._consumer: asyncio.Task | None = None
@@ -105,6 +140,8 @@ class ClaudeCodeProcessor(FrameProcessor):
             return
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
+            if await self._answered_approval(frame.text):
+                return
             await self._bridge.send(
                 {"type": "transcript", "role": "user", "text": frame.text, "final": True}
             )
@@ -121,6 +158,50 @@ class ClaudeCodeProcessor(FrameProcessor):
             return
 
         await self.push_frame(frame, direction)
+
+    async def _answered_approval(self, text: str) -> bool:
+        """Consume a spoken yes/no while a permission question is open."""
+        if not self._approvals or not self._approvals.pending_id:
+            return False
+        verdict = hears_approval(text)
+        if verdict is None:
+            return False
+        await self._bridge.send(
+            {"type": "transcript", "role": "user", "text": text, "final": True}
+        )
+        await self.resolve_approval(verdict, "by voice")
+        return True
+
+    async def resolve_approval(self, approved: bool, how: str = ""):
+        if not self._approvals:
+            return
+        req_id = self._approvals.pending_id
+        if not req_id or not self._approvals.resolve(req_id, approved, how):
+            return
+        await self._bridge.send({"type": "approval_closed", "id": req_id, "approved": approved})
+        await self._bridge.state("thinking")
+
+    async def ask_approval(self, request: dict):
+        """A hook is blocked on us; put the question in the notch and say it."""
+        await self._bridge.send(
+            {
+                "type": "approval",
+                "id": request["id"],
+                "tool": request.get("tool", "tool"),
+                "reason": request.get("reason", ""),
+            }
+        )
+        await self._bridge.state("waiting")
+        await self._speak_now(f"{request.get('reason', 'This one')} — want me to go ahead?")
+
+    async def _speak_now(self, text: str):
+        """Say something that isn't part of Claude's streamed answer."""
+        if not self._responding:
+            self._responding = True
+            await self.push_frame(LLMFullResponseStartFrame())
+        await self.push_frame(LLMTextFrame(text))
+        await self.push_frame(LLMFullResponseEndFrame())
+        self._responding = False
 
     async def send_text_turn(self, text: str):
         """Typed input from the notch shell — same path as a spoken turn."""

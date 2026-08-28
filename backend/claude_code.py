@@ -30,11 +30,13 @@ class ClaudeCodeSession:
         model: str = "",
         permission_mode: str = "acceptEdits",
         system_prompt: str | None = None,
+        settings: dict | None = None,
     ):
         self.cwd = cwd
         self.model = model
         self.permission_mode = permission_mode
         self.system_prompt = system_prompt
+        self.settings = settings
         self.proc: asyncio.subprocess.Process | None = None
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.session_id: str | None = None
@@ -62,6 +64,8 @@ class ClaudeCodeSession:
             argv += ["--model", self.model]
         if self.system_prompt:
             argv += ["--append-system-prompt", self.system_prompt]
+        if self.settings:
+            argv += ["--settings", json.dumps(self.settings)]
         return argv
 
     async def start(self):
