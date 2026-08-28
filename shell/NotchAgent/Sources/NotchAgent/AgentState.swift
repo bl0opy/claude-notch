@@ -56,10 +56,13 @@ final class AgentState: ObservableObject {
     @Published var lastError: String = ""
     @Published var approval: ApprovalRequest?
     @Published var hovering: Bool = false
+    /// True while ⌘ is held — set locally the moment the key goes down, then
+    /// confirmed by the backend's own `mic` message.
+    @Published var micOpen: Bool = false
 
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
-    var expanded: Bool { hovering || phase == .thinking || approval != nil }
+    var expanded: Bool { hovering || micOpen || phase == .thinking || approval != nil }
 
     private var client: BridgeClient?
 
@@ -104,6 +107,8 @@ final class AgentState: ObservableObject {
             guard let id = message["id"] as? String,
                   let index = tools.firstIndex(where: { $0.id == id }) else { return }
             tools[index].status = (message["ok"] as? Bool ?? true) ? .done : .failed
+        case "mic":
+            micOpen = message["open"] as? Bool ?? false
         case "session":
             sessionCwd = message["cwd"] as? String ?? ""
         case "error":
@@ -115,6 +120,10 @@ final class AgentState: ObservableObject {
     }
 
     func interrupt() { client?.send(["type": "interrupt"]) }
+    func setTalking(_ down: Bool) {
+        micOpen = down
+        client?.send(["type": "ptt", "down": down])
+    }
     func answerApproval(_ approved: Bool) {
         client?.send(["type": "approve", "approved": approved])
         approval = nil

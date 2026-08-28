@@ -18,6 +18,7 @@ struct NotchView: View {
         .frame(maxWidth: .infinity, alignment: .top)
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: state.expanded)
         .animation(.easeOut(duration: 0.18), value: state.phase)
+        .animation(.easeOut(duration: 0.12), value: state.micOpen)
         .onHover { hovering in
             state.hovering = hovering
         }
@@ -25,7 +26,7 @@ struct NotchView: View {
 
     private var collapsed: some View {
         HStack(spacing: 0) {
-            StatusDot(phase: state.phase)
+            StatusDot(phase: state.phase, live: state.micOpen)
                 .frame(width: 40, alignment: .leading)
                 .padding(.leading, 14)
             Spacer(minLength: geometry.notchWidth)
@@ -71,6 +72,9 @@ struct NotchView: View {
                         .foregroundStyle(Color(white: 0.85))
                 }
                 .buttonStyle(.plain)
+                Text(state.micOpen ? "listening — let go when done" : "hold ⌘ to talk")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(state.micOpen ? AgentPhase.listening.tint : Color(white: 0.38))
                 Spacer()
                 if !state.sessionCwd.isEmpty {
                     Text(URL(fileURLWithPath: state.sessionCwd).lastPathComponent)
@@ -258,20 +262,30 @@ private struct FieldBlock: View {
 
 private struct StatusDot: View {
     let phase: AgentPhase
+    /// The mic is actually open — the key is down right now.
+    let live: Bool
     @State private var pulse = false
+
+    private var tint: Color { live ? AgentPhase.listening.tint : phase.tint }
 
     var body: some View {
         Circle()
-            .fill(phase.tint)
+            .fill(tint)
             .frame(width: 7, height: 7)
             .scaleEffect(pulse ? 1.5 : 1.0)
             .opacity(pulse ? 0.55 : 1.0)
+            .overlay(
+                Circle()
+                    .stroke(AgentPhase.listening.tint.opacity(live ? 0.5 : 0), lineWidth: 1)
+                    .frame(width: 15, height: 15)
+            )
             .onAppear { animate() }
             .onChange(of: phase) { _, _ in animate() }
+            .onChange(of: live) { _, _ in animate() }
     }
 
     private func animate() {
-        let active = phase == .listening || phase == .thinking || phase == .speaking
+        let active = live || phase == .thinking || phase == .speaking
         withAnimation(active ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default) {
             pulse = active
         }

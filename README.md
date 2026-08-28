@@ -27,6 +27,11 @@ cp .env.example .env      # fill in DEEPGRAM_API_KEY
 .venv/bin/python -m backend.main   # backend only
 ```
 
+Hold ⌘ to talk, let go when you're done — the mic is shut the rest of the time.
+Holding it while Claude is talking cuts it off. A tap of ⌘, or ⌘ as part of a
+shortcut, does nothing: it has to be held alone for 200 ms. Needs Accessibility
+permission. Set `PUSH_TO_TALK=0` for the old always-on mic.
+
 Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 
 ## Layout
@@ -37,6 +42,7 @@ Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 | `backend/claude_code.py` | Long-lived `claude -p` subprocess, stream-json in/out |
 | `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
+| `backend/ptt.py` | Push-to-talk gate — silences the mic unless ⌘ is held |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |

@@ -33,6 +33,10 @@ class Config:
     # ignoring whatever interface is the current system default.
     input_device: str = field(default_factory=lambda: os.getenv("AUDIO_IN_DEVICE", ""))
     output_device: str = field(default_factory=lambda: os.getenv("AUDIO_OUT_DEVICE", ""))
+    # Hold-to-talk: the mic is shut unless the notch shell says the key is down.
+    # With it on the mic gate is redundant — nothing gets in while Claude talks
+    # unless you deliberately hold the key to barge in.
+    push_to_talk: bool = field(default_factory=lambda: os.getenv("PUSH_TO_TALK", "1") == "1")
     # The built-in mic hears the built-in speakers and there's no echo canceller,
     # so hold the mic shut while the agent talks. Turn off on headphones.
     mic_gate: bool = field(default_factory=lambda: os.getenv("MIC_GATE", "1") == "1")

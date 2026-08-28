@@ -16,6 +16,7 @@ from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
 from backend.mic_gate import MicGate
+from backend.ptt import PushToTalkGate
 from backend.config import ROOT, config
 from backend.processor import ClaudeCodeProcessor
 from backend.speech import SPEECH_SYSTEM_PROMPT
@@ -98,8 +99,13 @@ async def run():
     tts = build_tts()
     brain = ClaudeCodeProcessor(session, bridge, config.cancel_on_interrupt, approvals)
 
+    ptt = PushToTalkGate() if config.push_to_talk else None
+
     stages = [transport.input()]
-    if config.mic_gate:
+    if ptt:
+        stages.append(ptt)
+        logger.info("push-to-talk on — hold the command key to talk")
+    elif config.mic_gate:
         stages.append(MicGate(config.mic_gate_tail_ms))
         logger.info(f"mic gate on ({config.mic_gate_tail_ms} ms tail) — voice barge-in disabled")
     else:
@@ -128,6 +134,16 @@ async def run():
     async def on_approve(msg):
         await brain.resolve_approval(bool(msg.get("approved")), "from the notch")
 
+    async def on_ptt(msg):
+        if not ptt:
+            return
+        down = bool(msg.get("down"))
+        ptt.set_open(down)
+        await bridge.send({"type": "mic", "open": down})
+        # Holding the key while it's talking is how you cut it off.
+        if down and bridge.last_state == "speaking":
+            await task.queue_frame(InterruptionFrame())
+
     async def on_say(msg):
         text = (msg.get("text") or "").strip()
         if text:
@@ -136,6 +152,7 @@ async def run():
     approvals.on_ask(brain.ask_approval)
     bridge.on("approve", on_approve)
     bridge.on("interrupt", on_interrupt)
+    bridge.on("ptt", on_ptt)
     bridge.on("text", on_text)
     bridge.on("say", on_say)
 
