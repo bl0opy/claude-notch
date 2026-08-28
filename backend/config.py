@@ -15,8 +15,24 @@ class Config:
     deepgram_voice: str = field(
         default_factory=lambda: os.getenv("DEEPGRAM_VOICE", "aura-2-thalia-en")
     )
+    audio_in_sample_rate: int = field(
+        default_factory=lambda: int(os.getenv("AUDIO_IN_SAMPLE_RATE", "16000"))
+    )
+    audio_out_sample_rate: int = field(
+        default_factory=lambda: int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "48000"))
+    )
+    input_device_index: int | None = field(
+        default_factory=lambda: int(os.environ["AUDIO_IN_DEVICE"])
+        if os.getenv("AUDIO_IN_DEVICE")
+        else None
+    )
+    output_device_index: int | None = field(
+        default_factory=lambda: int(os.environ["AUDIO_OUT_DEVICE"])
+        if os.getenv("AUDIO_OUT_DEVICE")
+        else None
+    )
     eot_threshold: float = field(default_factory=lambda: float(os.getenv("EOT_THRESHOLD", "0.7")))
-    eot_timeout_ms: int = field(default_factory=lambda: int(os.getenv("EOT_TIMEOUT_MS", "3000")))
+    eot_timeout_ms: int = field(default_factory=lambda: int(os.getenv("EOT_TIMEOUT_MS", "1500")))
     ws_host: str = field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("WS_PORT", "8765")))
     claude_cwd: str = field(default_factory=lambda: os.getenv("CLAUDE_CWD", str(Path.cwd())))

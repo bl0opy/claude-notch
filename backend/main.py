@@ -33,7 +33,7 @@ def build_stt() -> DeepgramFluxSTTService:
 def build_tts() -> DeepgramTTSService:
     return DeepgramTTSService(
         api_key=config.deepgram_api_key,
-        sample_rate=24000,
+        sample_rate=config.audio_out_sample_rate,
         settings=DeepgramTTSService.Settings(voice=config.deepgram_voice),
     )
 
@@ -55,7 +55,14 @@ async def run():
     )
 
     transport = LocalAudioTransport(
-        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
+        LocalAudioTransportParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            audio_in_sample_rate=config.audio_in_sample_rate,
+            audio_out_sample_rate=config.audio_out_sample_rate,
+            input_device_index=config.input_device_index,
+            output_device_index=config.output_device_index,
+        )
     )
     stt = build_stt()
     tts = build_tts()
@@ -65,8 +72,8 @@ async def run():
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=24000,
+            audio_in_sample_rate=config.audio_in_sample_rate,
+            audio_out_sample_rate=config.audio_out_sample_rate,
             enable_metrics=True,
             enable_usage_metrics=True,
         ),
