@@ -21,6 +21,12 @@ class Config:
     audio_out_sample_rate: int = field(
         default_factory=lambda: int(os.getenv("AUDIO_OUT_SAMPLE_RATE", "48000"))
     )
+    # aura-2 renders at 24 kHz; asking Deepgram for a higher rate returns a
+    # poorly upsampled stream with audible imaging. Synthesize native, let
+    # pipecat resample to the device rate with soxr.
+    tts_sample_rate: int = field(
+        default_factory=lambda: int(os.getenv("TTS_SAMPLE_RATE", "24000"))
+    )
     input_device_index: int | None = field(
         default_factory=lambda: int(os.environ["AUDIO_IN_DEVICE"])
         if os.getenv("AUDIO_IN_DEVICE")

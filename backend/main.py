@@ -33,7 +33,7 @@ def build_stt() -> DeepgramFluxSTTService:
 def build_tts() -> DeepgramTTSService:
     return DeepgramTTSService(
         api_key=config.deepgram_api_key,
-        sample_rate=config.audio_out_sample_rate,
+        sample_rate=config.tts_sample_rate,
         settings=DeepgramTTSService.Settings(voice=config.deepgram_voice),
     )
 
