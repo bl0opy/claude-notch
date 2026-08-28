@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 from loguru import logger
 from pipecat.frames.frames import (
@@ -30,6 +31,35 @@ _TOOL_NARRATION = {
     "WebFetch": "fetching a page",
     "WebSearch": "searching the web",
 }
+
+# The argument worth showing for each tool, in priority order — the same thing
+# Claude Code puts in parentheses after the tool name.
+_TOOL_ARGS = {
+    "Read": ("file_path",),
+    "Edit": ("file_path",),
+    "Write": ("file_path",),
+    "NotebookEdit": ("notebook_path",),
+    "Bash": ("command",),
+    "Grep": ("pattern",),
+    "Glob": ("pattern",),
+    "Task": ("description",),
+    "WebFetch": ("url",),
+    "WebSearch": ("query",),
+    "Skill": ("skill",),
+}
+
+
+def _tool_detail(name: str, args: dict) -> str:
+    """One-line argument summary, paths shortened to a basename."""
+    keys = _TOOL_ARGS.get(name) or tuple(args)[:1]
+    for key in keys:
+        value = args.get(key)
+        if not isinstance(value, str) or not value:
+            continue
+        if key.endswith("path"):
+            value = os.path.basename(value) or value
+        return " ".join(value.split())[:80]
+    return ""
 
 
 class ClaudeCodeProcessor(FrameProcessor):
@@ -141,9 +171,26 @@ class ClaudeCodeProcessor(FrameProcessor):
                     await self._speak(chunk)
 
             elif kind == "tool_use":
-                verb = _TOOL_NARRATION.get(event["name"], f"using {event['name']}")
+                name = event["name"]
+                verb = _TOOL_NARRATION.get(name, f"using {name}")
                 await self._bridge.send(
-                    {"type": "tool", "name": event["name"], "summary": verb}
+                    {
+                        "type": "tool",
+                        "id": event.get("id", ""),
+                        "name": name,
+                        "summary": verb,
+                        "detail": _tool_detail(name, event.get("input") or {}),
+                    }
+                )
+
+            elif kind == "tool_result":
+                await self._bridge.send(
+                    {
+                        "type": "tool_result",
+                        "id": event.get("id", ""),
+                        "ok": not event.get("is_error"),
+                        "text": event.get("text", ""),
+                    }
                 )
 
             elif kind == "turn_end":

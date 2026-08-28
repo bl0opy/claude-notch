@@ -7,6 +7,17 @@ from typing import Any, AsyncIterator
 from loguru import logger
 
 
+def _result_text(content: Any) -> str:
+    """Flatten a tool_result body to one short line."""
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = " ".join(b.get("text", "") for b in content if isinstance(b, dict))
+    else:
+        text = ""
+    return " ".join(text.split())[:200]
+
+
 class ClaudeCodeSession:
     """Long-lived `claude -p` subprocess speaking stream-json over stdin/stdout.
 
@@ -28,6 +39,8 @@ class ClaudeCodeSession:
         self.events: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self.session_id: str | None = None
         self._block_types: dict[int, str] = {}
+        # tool_use_id -> tool name, so a later tool_result can name itself.
+        self._tool_names: dict[str, str] = {}
         self._reader_task: asyncio.Task | None = None
         self._stderr_task: asyncio.Task | None = None
         self._pending_control: dict[str, asyncio.Future] = {}
@@ -147,13 +160,34 @@ class ClaudeCodeSession:
             out = []
             for block in msg.get("message", {}).get("content", []):
                 if block.get("type") == "tool_use":
+                    tool_id = block.get("id", "")
+                    name = block.get("name", "tool")
+                    self._tool_names[tool_id] = name
                     out.append(
                         {
                             "kind": "tool_use",
-                            "name": block.get("name", "tool"),
+                            "id": tool_id,
+                            "name": name,
                             "input": block.get("input", {}),
                         }
                     )
+            return out
+
+        if mtype == "user":
+            out = []
+            for block in msg.get("message", {}).get("content", []):
+                if block.get("type") != "tool_result":
+                    continue
+                tool_id = block.get("tool_use_id", "")
+                out.append(
+                    {
+                        "kind": "tool_result",
+                        "id": tool_id,
+                        "name": self._tool_names.pop(tool_id, "tool"),
+                        "is_error": bool(block.get("is_error")),
+                        "text": _result_text(block.get("content")),
+                    }
+                )
             return out
 
         if mtype == "result":
