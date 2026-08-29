@@ -53,7 +53,12 @@ class Config:
     ws_host: str = field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("WS_PORT", "8765")))
     claude_cwd: str = field(default_factory=lambda: os.getenv("CLAUDE_CWD", str(Path.cwd())))
-    claude_model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", ""))
+    # Sonnet by default: the notch agent is short-turn conversational work, and
+    # the CLI's own default (Opus) is more model than that needs. Empty falls
+    # back to whatever `claude` is configured to use.
+    claude_model: str = field(
+        default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
+    )
     permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "auto"))
     approval_port: int = field(default_factory=lambda: int(os.getenv("APPROVAL_PORT", "8766")))
     approval_timeout_s: float = field(

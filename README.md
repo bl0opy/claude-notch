@@ -18,7 +18,8 @@ pyenv local 3.11.6 && python -m venv .venv
 cp .env.example .env      # fill in DEEPGRAM_API_KEY
 ```
 
-`claude` must be on PATH and already logged in.
+`claude` must be on PATH and already logged in. It runs on Sonnet 5 — override
+with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
 
 ## Run
 
