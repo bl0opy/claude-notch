@@ -1,5 +1,4 @@
 import asyncio
-import os
 import re
 
 from loguru import logger
@@ -21,35 +20,7 @@ from backend.approvals import ApprovalServer
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
 from backend.speech import SpeechFilter
-
-_TOOL_NARRATION = {
-    "Read": "reading",
-    "Edit": "editing",
-    "Write": "writing",
-    "Bash": "running a command",
-    "Grep": "searching",
-    "Glob": "looking for files",
-    "Task": "spawning a subagent",
-    "WebFetch": "fetching a page",
-    "WebSearch": "searching the web",
-}
-
-# The argument worth showing for each tool, in priority order — the same thing
-# Claude Code puts in parentheses after the tool name.
-_TOOL_ARGS = {
-    "Read": ("file_path",),
-    "Edit": ("file_path",),
-    "Write": ("file_path",),
-    "NotebookEdit": ("notebook_path",),
-    "Bash": ("command",),
-    "Grep": ("pattern",),
-    "Glob": ("pattern",),
-    "Task": ("description",),
-    "WebFetch": ("url",),
-    "WebSearch": ("query",),
-    "Skill": ("skill",),
-}
-
+from backend.tools import _TOOL_NARRATION, _tool_detail
 
 _YES = {"yes","yeah","yep","yup","sure","ok","okay","go","go ahead","do it","approve",
         "approved","allow","fine","please do","affirmative","sounds good","confirm"}
@@ -75,19 +46,6 @@ def hears_approval(text: str) -> bool | None:
     if any(w in _YES for w in words) and not any(w in _NO for w in words):
         return True
     return None
-
-
-def _tool_detail(name: str, args: dict) -> str:
-    """One-line argument summary, paths shortened to a basename."""
-    keys = _TOOL_ARGS.get(name) or tuple(args)[:1]
-    for key in keys:
-        value = args.get(key)
-        if not isinstance(value, str) or not value:
-            continue
-        if key.endswith("path"):
-            value = os.path.basename(value) or value
-        return " ".join(value.split())[:80]
-    return ""
 
 
 class ClaudeCodeProcessor(FrameProcessor):
