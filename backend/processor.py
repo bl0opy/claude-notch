@@ -104,13 +104,14 @@ class ClaudeCodeProcessor(FrameProcessor):
         bridge: NotchBridge,
         cancel_on_interrupt: bool,
         approvals: ApprovalServer | None = None,
+        max_spoken_sentences: int = 2,
     ):
         super().__init__()
         self._session = session
         self._bridge = bridge
         self._approvals = approvals
         self._cancel_on_interrupt = cancel_on_interrupt
-        self._filter = SpeechFilter()
+        self._filter = SpeechFilter(max_spoken_sentences)
         self._consumer: asyncio.Task | None = None
         self._responding = False
         self._dropping = False
@@ -189,10 +190,13 @@ class ClaudeCodeProcessor(FrameProcessor):
                 "id": request["id"],
                 "tool": request.get("tool", "tool"),
                 "reason": request.get("reason", ""),
+                "summary": request.get("summary", ""),
             }
         )
         await self._bridge.state("waiting")
-        await self._speak_now(f"{request.get('reason', 'This one')} — want me to go ahead?")
+        # Out loud it's only ever the summary — the command itself is on screen.
+        summary = request.get("summary") or "this one"
+        await self._speak_now(f"I need your approval for {summary}.")
 
     async def _speak_now(self, text: str):
         """Say something that isn't part of Claude's streamed answer."""

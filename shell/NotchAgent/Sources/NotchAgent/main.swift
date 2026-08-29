@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let state = AgentState()
     private var client: BridgeClient!
     private var hotKeyMonitor: Any?
+    private let pushToTalk = PushToTalk()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -32,17 +33,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         installStatusItem()
         installHotKey()
+
+        pushToTalk.onChange = { [weak self] down in self?.state.setTalking(down) }
+        pushToTalk.install()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         client?.disconnect()
         if let monitor = hotKeyMonitor { NSEvent.removeMonitor(monitor) }
+        pushToTalk.uninstall()
     }
 
     private func installStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "◎"
         let menu = NSMenu()
+        menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(
             withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
         ).target = self

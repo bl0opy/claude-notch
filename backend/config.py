@@ -33,18 +33,32 @@ class Config:
     # ignoring whatever interface is the current system default.
     input_device: str = field(default_factory=lambda: os.getenv("AUDIO_IN_DEVICE", ""))
     output_device: str = field(default_factory=lambda: os.getenv("AUDIO_OUT_DEVICE", ""))
+    # Hold-to-talk: the mic is shut unless the notch shell says the key is down.
+    # With it on the mic gate is redundant — nothing gets in while Claude talks
+    # unless you deliberately hold the key to barge in.
+    push_to_talk: bool = field(default_factory=lambda: os.getenv("PUSH_TO_TALK", "1") == "1")
     # The built-in mic hears the built-in speakers and there's no echo canceller,
     # so hold the mic shut while the agent talks. Turn off on headphones.
     mic_gate: bool = field(default_factory=lambda: os.getenv("MIC_GATE", "1") == "1")
     mic_gate_tail_ms: int = field(
         default_factory=lambda: int(os.getenv("MIC_GATE_TAIL_MS", "250"))
     )
+    # How many sentences of a turn ever reach the speakers. The notch prints
+    # everything regardless.
+    spoken_sentences: int = field(
+        default_factory=lambda: int(os.getenv("SPOKEN_SENTENCES", "2"))
+    )
     eot_threshold: float = field(default_factory=lambda: float(os.getenv("EOT_THRESHOLD", "0.7")))
     eot_timeout_ms: int = field(default_factory=lambda: int(os.getenv("EOT_TIMEOUT_MS", "1500")))
     ws_host: str = field(default_factory=lambda: os.getenv("WS_HOST", "127.0.0.1"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("WS_PORT", "8765")))
     claude_cwd: str = field(default_factory=lambda: os.getenv("CLAUDE_CWD", str(Path.cwd())))
-    claude_model: str = field(default_factory=lambda: os.getenv("CLAUDE_MODEL", ""))
+    # Sonnet by default: the notch agent is short-turn conversational work, and
+    # the CLI's own default (Opus) is more model than that needs. Empty falls
+    # back to whatever `claude` is configured to use.
+    claude_model: str = field(
+        default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
+    )
     permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "auto"))
     approval_port: int = field(default_factory=lambda: int(os.getenv("APPROVAL_PORT", "8766")))
     approval_timeout_s: float = field(

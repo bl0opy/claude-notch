@@ -13,7 +13,7 @@ class NotchBridge:
 
     Backend -> shell:  state | transcript | assistant_delta | assistant_done |
                        tool | error | session
-    Shell -> backend:  interrupt | text | mute | settings
+    Shell -> backend:  interrupt | text | ptt | approve | say
     """
 
     def __init__(self, host: str, port: int):
@@ -23,6 +23,10 @@ class NotchBridge:
         self._server = None
         self._handlers: dict[str, Handler] = {}
         self._last_state = "idle"
+
+    @property
+    def last_state(self) -> str:
+        return self._last_state
 
     def on(self, msg_type: str, handler: Handler):
         self._handlers[msg_type] = handler
