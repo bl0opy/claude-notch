@@ -11,6 +11,7 @@ from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
+from backend.agents import AgentDirector
 from backend.approvals import ApprovalServer
 from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
@@ -97,8 +98,9 @@ async def run():
     )
     stt = build_stt()
     tts = build_tts()
+    director = AgentDirector(session)
     brain = ClaudeCodeProcessor(
-        session, bridge, config.cancel_on_interrupt, approvals, config.spoken_sentences
+        director, bridge, config.cancel_on_interrupt, approvals, config.spoken_sentences
     )
 
     ptt = PushToTalkGate() if config.push_to_talk else None
@@ -146,6 +148,23 @@ async def run():
         if down and bridge.last_state == "speaking":
             await task.queue_frame(InterruptionFrame())
 
+    async def on_focus(msg):
+        session_id = (msg.get("id") or "").strip()
+        if not session_id:
+            return
+        director.focus(session_id)
+        await bridge.send({"type": "focus", "id": session_id})
+
+    async def on_start_agent(msg):
+        cwd = (msg.get("cwd") or "").strip()
+        if not cwd:
+            return
+        try:
+            await director.start_agent(cwd)
+        except Exception as e:
+            logger.error(f"could not start an agent in {cwd}: {e}")
+            await bridge.send({"type": "error", "message": f"could not start an agent: {e}"})
+
     async def on_say(msg):
         text = (msg.get("text") or "").strip()
         if text:
@@ -155,6 +174,8 @@ async def run():
     bridge.on("approve", on_approve)
     bridge.on("interrupt", on_interrupt)
     bridge.on("ptt", on_ptt)
+    bridge.on("focus", on_focus)
+    bridge.on("start_agent", on_start_agent)
     bridge.on("text", on_text)
     bridge.on("say", on_say)
 

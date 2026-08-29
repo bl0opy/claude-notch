@@ -104,6 +104,8 @@ def main():
     tool = event.get("tool_name", "")
     args = event.get("tool_input") or {}
     cwd = event.get("cwd") or os.getcwd()
+    # Which agent is asking — several can be running under the notch at once.
+    session_id = event.get("session_id", "")
 
     reason = risk(tool, args, cwd)
     if not reason:
@@ -117,6 +119,7 @@ def main():
                 "reason": reason,
                 "summary": spoken(tool, args),
                 "cwd": cwd,
+                "session_id": session_id,
             }
         )
     except Exception:

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import re
 
 from loguru import logger
@@ -18,7 +19,7 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from backend.approvals import ApprovalServer
 from backend.bridge import NotchBridge
-from backend.claude_code import ClaudeCodeSession
+from backend.agents import AgentDirector
 from backend.speech import SpeechFilter
 from backend.tools import _TOOL_NARRATION, _tool_detail
 
@@ -58,14 +59,14 @@ class ClaudeCodeProcessor(FrameProcessor):
 
     def __init__(
         self,
-        session: ClaudeCodeSession,
+        director: AgentDirector,
         bridge: NotchBridge,
         cancel_on_interrupt: bool,
         approvals: ApprovalServer | None = None,
         max_spoken_sentences: int = 2,
     ):
         super().__init__()
-        self._session = session
+        self._director = director
         self._bridge = bridge
         self._approvals = approvals
         self._cancel_on_interrupt = cancel_on_interrupt
@@ -81,7 +82,7 @@ class ClaudeCodeProcessor(FrameProcessor):
 
         if isinstance(frame, StartFrame):
             await self.push_frame(frame, direction)
-            await self._session.start()
+            await self._director.start()
             self._consumer = asyncio.create_task(self._consume())
             await self._bridge.state("listening")
             return
@@ -89,7 +90,7 @@ class ClaudeCodeProcessor(FrameProcessor):
         if isinstance(frame, (EndFrame, CancelFrame)):
             if self._consumer:
                 self._consumer.cancel()
-            await self._session.stop()
+            await self._director.stop()
             await self.push_frame(frame, direction)
             return
 
@@ -109,7 +110,9 @@ class ClaudeCodeProcessor(FrameProcessor):
             self._raw = ""
             try:
                 self._pending_turns += 1
-                await self._session.send_user_text(frame.text)
+                status = await self._director.send_turn(frame.text)
+                if status == "queued":
+                    await self._speak_now("It's mid-turn — I'll pass that on when it's free.")
             except Exception as e:
                 self._pending_turns -= 1
                 logger.error(f"failed to send turn to claude code: {e}")
@@ -119,8 +122,8 @@ class ClaudeCodeProcessor(FrameProcessor):
         await self.push_frame(frame, direction)
 
     async def _answered_approval(self, text: str) -> bool:
-        """Consume a spoken yes/no while a permission question is open."""
-        if not self._approvals or not self._approvals.pending_id:
+        """Consume a spoken yes/no while the focused agent has a question open."""
+        if not self._approvals or not self._approvals.pending_for(self._director.focused):
             return False
         verdict = hears_approval(text)
         if verdict is None:
@@ -134,7 +137,9 @@ class ClaudeCodeProcessor(FrameProcessor):
     async def resolve_approval(self, approved: bool, how: str = ""):
         if not self._approvals:
             return
-        req_id = self._approvals.pending_id
+        # An answer is always for the agent you're talking to, never whichever
+        # question happened to arrive last.
+        req_id = self._approvals.pending_for(self._director.focused) or self._approvals.pending_id
         if not req_id or not self._approvals.resolve(req_id, approved, how):
             return
         await self._bridge.send({"type": "approval_closed", "id": req_id, "approved": approved})
@@ -142,6 +147,7 @@ class ClaudeCodeProcessor(FrameProcessor):
 
     async def ask_approval(self, request: dict):
         """A hook is blocked on us; put the question in the notch and say it."""
+        asked_by = request.get("session_id", "")
         await self._bridge.send(
             {
                 "type": "approval",
@@ -149,8 +155,15 @@ class ClaudeCodeProcessor(FrameProcessor):
                 "tool": request.get("tool", "tool"),
                 "reason": request.get("reason", ""),
                 "summary": request.get("summary", ""),
+                "agent": asked_by,
             }
         )
+        # A question from an agent you aren't talking to gets a nudge, not the
+        # whole question — answering it means focusing it first.
+        if asked_by and asked_by != self._director.focused:
+            where = os.path.basename(self._director.cwd_of(asked_by)) or "another agent"
+            await self._speak_now(f"{where} needs your ok.")
+            return
         await self._bridge.state("waiting")
         # Out loud it's only ever the summary — the command itself is on screen.
         summary = request.get("summary") or "this one"
@@ -181,7 +194,7 @@ class ClaudeCodeProcessor(FrameProcessor):
             await self.push_frame(LLMFullResponseEndFrame())
             self._responding = False
         if self._cancel_on_interrupt:
-            await self._session.interrupt()
+            await self._director.interrupt()
 
     async def _speak(self, text: str):
         # A turn we already talked over may still be streaming; only the newest one speaks.
@@ -194,12 +207,29 @@ class ClaudeCodeProcessor(FrameProcessor):
         await self.push_frame(LLMTextFrame(text + " "))
 
     async def _consume(self):
-        async for event in self._session.stream():
+        async for agent_id, event in self._director.stream():
             kind = event["kind"]
+            # Everything reaches the notch; only the focused agent is spoken.
+            focused = agent_id == self._director.focused
+
+            if kind == "alert":
+                # A background agent blocked or finished. One line, and never
+                # over the top of a permission question we're already asking.
+                if not (self._approvals and self._approvals.pending_id):
+                    await self._speak_now(event["text"])
+                continue
+
+            if kind == "delivery":
+                await self._bridge.send({k: v for k, v in event.items() if k != "kind"})
+                continue
 
             if kind == "ready":
                 await self._bridge.send(
-                    {"type": "session", "id": event["session_id"], "cwd": self._session.cwd}
+                    {
+                        "type": "session",
+                        "id": event["session_id"],
+                        "cwd": self._director.cwd_of(event["session_id"]),
+                    }
                 )
 
             elif kind == "turn_start":
@@ -208,8 +238,12 @@ class ClaudeCodeProcessor(FrameProcessor):
             elif kind == "text_delta":
                 if self._pending_turns > 1:
                     continue
+                await self._bridge.send(
+                    {"type": "assistant_delta", "text": event["text"], "agent": agent_id}
+                )
+                if not focused:
+                    continue
                 self._raw += event["text"]
-                await self._bridge.send({"type": "assistant_delta", "text": event["text"]})
                 for chunk in self._filter.feed(event["text"]):
                     await self._speak(chunk)
 
@@ -223,6 +257,7 @@ class ClaudeCodeProcessor(FrameProcessor):
                         "name": name,
                         "summary": verb,
                         "detail": _tool_detail(name, event.get("input") or {}),
+                        "agent": agent_id,
                     }
                 )
 
@@ -233,10 +268,13 @@ class ClaudeCodeProcessor(FrameProcessor):
                         "id": event.get("id", ""),
                         "ok": not event.get("is_error"),
                         "text": event.get("text", ""),
+                        "agent": agent_id,
                     }
                 )
 
             elif kind == "turn_end":
+                if not focused:
+                    continue
                 self._pending_turns = max(0, self._pending_turns - 1)
                 self._dropping = False
                 if self._pending_turns > 0:

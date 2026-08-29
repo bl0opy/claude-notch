@@ -23,6 +23,8 @@ class ApprovalServer:
         self.timeout_s = timeout_s
         self._server: asyncio.Server | None = None
         self._pending: dict[str, asyncio.Future[tuple[bool, str]]] = {}
+        # request id -> which session asked, so an answer lands on the right agent
+        self._asked_by: dict[str, str] = {}
         self._ask: Asker | None = None
 
     def on_ask(self, ask: Asker):
@@ -31,8 +33,14 @@ class ApprovalServer:
     @property
     def pending_id(self) -> str | None:
         """The request currently waiting on the user, if any."""
+        return self.pending_for(None)
+
+    def pending_for(self, session_id: str | None) -> str | None:
+        """The open request from one agent, or from anyone when session_id is None."""
         for req_id, fut in self._pending.items():
-            if not fut.done():
+            if fut.done():
+                continue
+            if session_id is None or self._asked_by.get(req_id) == session_id:
                 return req_id
         return None
 
@@ -71,6 +79,7 @@ class ApprovalServer:
 
         fut: asyncio.Future[tuple[bool, str]] = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
+        self._asked_by[req_id] = payload.get("session_id") or ""
         try:
             if self._ask:
                 await self._ask({**payload, "id": req_id})
@@ -81,6 +90,7 @@ class ApprovalServer:
             approved, reason = False, str(e)
         finally:
             self._pending.pop(req_id, None)
+            self._asked_by.pop(req_id, None)
 
         writer.write((json.dumps({"approved": approved, "reason": reason}) + "\n").encode())
         try:

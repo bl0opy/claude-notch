@@ -76,14 +76,17 @@ struct NotchView: View {
                     .lineLimit(2)
             }
             HStack(spacing: 10) {
+                // Only an agent the notch started can be cut off mid-turn; one
+                // running in a terminal has to be stopped there.
                 Button(action: { state.interrupt() }) {
-                    Text("stop")
+                    Text(state.canInterrupt ? "stop" : "can't stop")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Capsule().fill(Color(white: 0.18)))
-                        .foregroundStyle(Color(white: 0.85))
+                        .background(Capsule().fill(Color(white: state.canInterrupt ? 0.18 : 0.11)))
+                        .foregroundStyle(Color(white: state.canInterrupt ? 0.85 : 0.4))
                 }
                 .buttonStyle(.plain)
+                .disabled(!state.canInterrupt)
                 Text(state.micOpen ? "listening — let go when done" : "hold \(PushToTalk.key.label) to talk")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(state.micOpen ? AgentPhase.listening.tint : Color(white: 0.38))

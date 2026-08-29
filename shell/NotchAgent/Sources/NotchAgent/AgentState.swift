@@ -65,6 +65,13 @@ final class AgentState: ObservableObject {
     @Published var focused: String?
     @Published var rosterDegraded: Bool = false
 
+    /// A foreign agent — one started in a terminal — can be talked to but not
+    /// interrupted, and its permission questions are answered where it runs.
+    var canInterrupt: Bool {
+        guard let focused, let agent = agents.first(where: { $0.id == focused }) else { return true }
+        return agent.owned
+    }
+
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
     var expanded: Bool { hovering || micOpen || phase == .thinking || approval != nil }
