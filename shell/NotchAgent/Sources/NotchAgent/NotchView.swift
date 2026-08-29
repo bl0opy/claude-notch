@@ -4,7 +4,7 @@ struct NotchView: View {
     @ObservedObject var state: AgentState
     let geometry: NotchGeometry
 
-    private var collapsedWidth: CGFloat { geometry.notchWidth + 96 }
+    private var collapsedWidth: CGFloat { geometry.notchWidth + 112 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,9 +26,14 @@ struct NotchView: View {
 
     private var collapsed: some View {
         HStack(spacing: 0) {
-            StatusDot(phase: state.phase, live: state.micOpen)
-                .frame(width: 40, alignment: .leading)
-                .padding(.leading, 14)
+            HStack(spacing: 6) {
+                StatusDot(phase: state.phase, live: state.micOpen)
+                if !state.agents.isEmpty {
+                    RosterBadge(agents: state.agents)
+                }
+            }
+            .frame(width: 56, alignment: .leading)
+            .padding(.leading, 14)
             Spacer(minLength: geometry.notchWidth)
             ClaudeMark(phase: state.phase)
                 .frame(width: 40, alignment: .trailing)
@@ -56,6 +61,13 @@ struct NotchView: View {
             }
             if !state.tools.isEmpty || state.phase == .thinking {
                 ActivityFeed(tools: state.tools, working: state.phase == .thinking)
+            }
+            if !state.agents.isEmpty {
+                AgentsSection(
+                    agents: state.agents,
+                    focused: state.focused,
+                    focus: { state.focus($0) }
+                )
             }
             if !state.lastError.isEmpty {
                 Text(state.lastError)
@@ -96,6 +108,93 @@ struct NotchView: View {
                 )
         )
         .padding(.top, 6)
+    }
+}
+
+
+/// Every claude session on the machine. The row that needs you sorts to the top,
+/// and clicking one hands it the mic.
+private struct AgentsSection: View {
+    let agents: [RemoteAgent]
+    let focused: String?
+    let focus: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("agents")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(white: 0.38))
+                .textCase(.uppercase)
+                .padding(.bottom, 6)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(agents) { agent in
+                        AgentRow(agent: agent, focused: agent.id == focused) { focus(agent.id) }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.never)
+            .frame(maxHeight: 112)
+        }
+    }
+}
+
+private struct AgentRow: View {
+    let agent: RemoteAgent
+    let focused: Bool
+    let focus: () -> Void
+
+    var body: some View {
+        Button(action: focus) {
+            HStack(alignment: .top, spacing: 7) {
+                Circle()
+                    .fill(agent.state.tint)
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 4)
+                Text(agent.title)
+                    .foregroundStyle(Color(white: focused ? 0.95 : 0.84))
+                Text(agent.subtitle)
+                    .foregroundStyle(Color(white: 0.46))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 6)
+                Text(compactTokens(agent.tokensOut))
+                    .foregroundStyle(Color(white: 0.38))
+                    .monospacedDigit()
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .lineLimit(1)
+            .padding(.vertical, 2)
+            .padding(.horizontal, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(focused ? Color(white: 0.14) : .clear)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// How many agents there are and the worst thing any of them is doing, small
+/// enough to sit beside the status dot when the notch is closed.
+private struct RosterBadge: View {
+    let agents: [RemoteAgent]
+
+    private var worst: RemoteAgent.State {
+        agents.map(\.state).min(by: { $0.rank < $1.rank }) ?? .idle
+    }
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text("\(agents.count)")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(white: 0.62))
+            Circle()
+                .fill(worst.tint)
+                .frame(width: 4, height: 4)
+        }
     }
 }
 

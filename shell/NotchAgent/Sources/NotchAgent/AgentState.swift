@@ -59,6 +59,11 @@ final class AgentState: ObservableObject {
     /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
     @Published var micOpen: Bool = false
+    /// Every claude session on the machine, worst state first.
+    @Published var agents: [RemoteAgent] = []
+    /// The one that hears the mic and speaks. nil = the voice agent's own session.
+    @Published var focused: String?
+    @Published var rosterDegraded: Bool = false
 
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
@@ -107,6 +112,14 @@ final class AgentState: ObservableObject {
             guard let id = message["id"] as? String,
                   let index = tools.firstIndex(where: { $0.id == id }) else { return }
             tools[index].status = (message["ok"] as? Bool ?? true) ? .done : .failed
+        case "agents":
+            let rows = (message["list"] as? [[String: Any]] ?? []).compactMap(RemoteAgent.init)
+            agents = rows.sorted {
+                ($0.state.rank, $0.project) < ($1.state.rank, $1.project)
+            }
+            rosterDegraded = message["degraded"] as? Bool ?? false
+        case "focus":
+            focused = message["id"] as? String
         case "mic":
             micOpen = message["open"] as? Bool ?? false
         case "session":
@@ -120,6 +133,15 @@ final class AgentState: ObservableObject {
     }
 
     func interrupt() { client?.send(["type": "interrupt"]) }
+    func focus(_ id: String) {
+        focused = id
+        client?.send(["type": "focus", "id": id])
+    }
+    /// The agents daemon dropped: empty the roster rather than show a frozen one.
+    func clearRoster() {
+        agents = []
+        rosterDegraded = false
+    }
     func setTalking(_ down: Bool) {
         micOpen = down
         client?.send(["type": "ptt", "down": down])

@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private let state = AgentState()
     private var client: BridgeClient!
+    private var agentsClient: BridgeClient!
     private var hotKeyMonitor: Any?
     private let pushToTalk = PushToTalk()
 
@@ -31,6 +32,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.attach(client)
         client.connect()
 
+        // The agents daemon is a separate process on its own port, so the roster
+        // outlives the voice pipeline. Its socket dropping says nothing about the
+        // voice agent's phase, so it must not touch it.
+        agentsClient = BridgeClient(url: URL(string: "ws://127.0.0.1:8767")!)
+        agentsClient.onMessage = { [weak self] message in self?.state.apply(message) }
+        agentsClient.onConnectionChange = { [weak self] connected in
+            if !connected { self?.state.clearRoster() }
+        }
+        agentsClient.connect()
+
         installStatusItem()
         installHotKey()
 
@@ -40,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         client?.disconnect()
+        agentsClient?.disconnect()
         if let monitor = hotKeyMonitor { NSEvent.removeMonitor(monitor) }
         pushToTalk.uninstall()
     }
