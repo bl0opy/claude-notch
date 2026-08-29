@@ -5,9 +5,9 @@ Claude Code does the actual work underneath.
 
 ```
 SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
-  state / transcript                                Deepgram Flux (STT)
-  stop button, ⌥Space                               claude -p (stream-json)
-                                                    Deepgram Aura-2 (TTS)
+  state / transcript / tools                        Deepgram Flux (STT)
+  hold right ⌥ to talk                              claude -p (stream-json)
+  stop button, ⌥Space                               Deepgram Aura-2 (TTS)
 ```
 
 ## Setup
@@ -40,7 +40,8 @@ is the old behaviour — it has to be held alone for 200 ms and any other key
 cancels it, since ⌘ is half of every shortcut on the machine.
 
 It speaks at most two sentences per turn (`SPOKEN_SENTENCES`) — the notch still
-shows the full answer. Permission questions are spoken as
+shows the full answer, and `backend/speech.py` strips code, diffs and markdown
+out of whatever does get spoken. Permission questions are spoken as
 "I need your approval for deleting some files"; the actual command stays on screen.
 
 Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
@@ -55,7 +56,10 @@ Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
 | `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
+| `backend/approvals.py` | Holds a blocked hook until the answer comes back |
+| `hooks/approve.py` | `PreToolUse` hook — decides what needs asking about |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
+| `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
 
 ## WebSocket protocol
@@ -67,7 +71,11 @@ Backend → shell:
 {"type": "transcript",      "role": "user", "text": "...", "final": true}
 {"type": "assistant_delta", "text": "..."}
 {"type": "assistant_done",  "text": "<full raw turn>"}
-{"type": "tool",            "name": "Edit", "summary": "editing"}
+{"type": "tool",            "id": "...", "name": "Edit", "summary": "editing", "detail": "..."}
+{"type": "tool_result",     "id": "...", "ok": true, "text": "..."}
+{"type": "approval",        "id": "...", "tool": "Bash", "reason": "...", "summary": "deleting some files"}
+{"type": "approval_closed", "id": "...", "approved": true}
+{"type": "mic",             "open": true}
 {"type": "session",         "id": "...", "cwd": "..."}
 {"type": "error",           "message": "..."}
 ```
@@ -76,15 +84,19 @@ Shell → backend:
 
 ```json
 {"type": "interrupt"}
-{"type": "text", "text": "typed turn, same path as a spoken one"}
-{"type": "say",  "text": "speak this verbatim"}
+{"type": "text",    "text": "typed turn, same path as a spoken one"}
+{"type": "say",     "text": "speak this verbatim"}
+{"type": "ptt",     "down": true}
+{"type": "approve", "approved": true}
 ```
 
 ## Config
 
 All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
-`CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `CANCEL_ON_INTERRUPT`,
-`WS_HOST`, `WS_PORT`.
+`CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
+`APPROVAL_PORT`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `SPOKEN_SENTENCES`,
+`WS_HOST`, `WS_PORT`. `PTT_KEY` is read by the shell, not the backend, so it has
+to be in the environment `run.sh` starts the app from (or `defaults write` it).
 
 ### Approvals
 
