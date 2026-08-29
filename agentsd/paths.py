@@ -1,8 +1,9 @@
 """Every path under ~/.claude is named here and nowhere else.
 
-`sessions/<pid>.<hash>.key` holds a peer auth token, `ide/*.lock` holds an IDE
-token, and `daemon/` and `.credentials.json` hold secrets — none of them are
-reachable through anything in this module.
+Enumeration only ever touches `sessions/*.json`. The sibling
+`sessions/<pid>.<hash>.key` holds the peer auth token and is handed out by
+`key_file()` alone, for the one caller that needs it (agentsd.peer). `ide/*.lock`,
+`daemon/` and `.credentials.json` are never named here at all.
 """
 import os
 from pathlib import Path
@@ -17,6 +18,11 @@ def session_files() -> list[Path]:
     if not SESSIONS_DIR.is_dir():
         return []
     return sorted(SESSIONS_DIR.glob("*.json"))
+
+
+def key_file(pid: int) -> Path | None:
+    """The peer token for one session — the only secret this daemon ever reads."""
+    return next(iter(sorted(SESSIONS_DIR.glob(f"{pid}.*.key"))), None)
 
 
 def slug(cwd: str) -> str:
