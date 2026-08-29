@@ -56,7 +56,7 @@ final class AgentState: ObservableObject {
     @Published var lastError: String = ""
     @Published var approval: ApprovalRequest?
     @Published var hovering: Bool = false
-    /// True while ⌘ is held — set locally the moment the key goes down, then
+    /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
     @Published var micOpen: Bool = false
 

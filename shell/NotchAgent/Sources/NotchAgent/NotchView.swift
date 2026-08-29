@@ -72,7 +72,7 @@ struct NotchView: View {
                         .foregroundStyle(Color(white: 0.85))
                 }
                 .buttonStyle(.plain)
-                Text(state.micOpen ? "listening — let go when done" : "hold ⌘ to talk")
+                Text(state.micOpen ? "listening — let go when done" : "hold \(PushToTalk.key.label) to talk")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(state.micOpen ? AgentPhase.listening.tint : Color(white: 0.38))
                 Spacer()

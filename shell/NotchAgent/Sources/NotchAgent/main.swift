@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "◎"
         let menu = NSMenu()
-        menu.addItem(withTitle: "Hold ⌘ to talk", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(
             withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
         ).target = self

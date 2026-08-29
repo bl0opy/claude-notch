@@ -27,10 +27,16 @@ cp .env.example .env      # fill in DEEPGRAM_API_KEY
 .venv/bin/python -m backend.main   # backend only
 ```
 
-Hold ⌘ to talk, let go when you're done — the mic is shut the rest of the time.
-Holding it while Claude is talking cuts it off. A tap of ⌘, or ⌘ as part of a
-shortcut, does nothing: it has to be held alone for 200 ms. Needs Accessibility
-permission. Set `PUSH_TO_TALK=0` for the old always-on mic.
+Hold **right ⌥** to talk, let go when you're done — the mic is shut the rest of
+the time. It's a global monitor, so it works in whatever app is frontmost, and
+nothing binds right ⌥ on its own, so it never doubles as a shortcut. Holding it
+while Claude is talking cuts it off. Needs Accessibility permission. Set
+`PUSH_TO_TALK=0` for the old always-on mic.
+
+Pick a different key with `PTT_KEY` (env, or `PTTKey` in defaults):
+`rightOption` (default), `rightCommand`, `fn`, `leftOption`, `command`. `command`
+is the old behaviour — it has to be held alone for 200 ms and any other key
+cancels it, since ⌘ is half of every shortcut on the machine.
 
 It speaks at most two sentences per turn (`SPOKEN_SENTENCES`) — the notch still
 shows the full answer. Permission questions are spoken as
@@ -46,7 +52,7 @@ Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 | `backend/claude_code.py` | Long-lived `claude -p` subprocess, stream-json in/out |
 | `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
-| `backend/ptt.py` | Push-to-talk gate — silences the mic unless ⌘ is held |
+| `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
