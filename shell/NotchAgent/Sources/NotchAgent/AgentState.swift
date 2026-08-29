@@ -64,11 +64,15 @@ final class AgentState: ObservableObject {
     /// The one that hears the mic and speaks. nil = the voice agent's own session.
     @Published var focused: String?
     @Published var rosterDegraded: Bool = false
+    /// Sessions the voice backend started, which is what makes them interruptible.
+    @Published var ownedIds: Set<String> = []
 
     /// A foreign agent — one started in a terminal — can be talked to but not
     /// interrupted, and its permission questions are answered where it runs.
     var canInterrupt: Bool {
-        guard let focused, let agent = agents.first(where: { $0.id == focused }) else { return true }
+        guard let focused else { return true }
+        if ownedIds.contains(focused) { return true }
+        guard let agent = agents.first(where: { $0.id == focused }) else { return true }
         return agent.owned
     }
 
@@ -127,6 +131,8 @@ final class AgentState: ObservableObject {
             rosterDegraded = message["degraded"] as? Bool ?? false
         case "focus":
             focused = message["id"] as? String
+        case "owned":
+            ownedIds = Set(message["ids"] as? [String] ?? [])
         case "mic":
             micOpen = message["open"] as? Bool ?? false
         case "session":

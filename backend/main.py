@@ -99,6 +99,11 @@ async def run():
     stt = build_stt()
     tts = build_tts()
     director = AgentDirector(session)
+
+    def announce_owned(ids: list[str]):
+        asyncio.create_task(bridge.send({"type": "owned", "ids": ids}))
+
+    director.on_owned_change = announce_owned
     brain = ClaudeCodeProcessor(
         director, bridge, config.cancel_on_interrupt, approvals, config.spoken_sentences
     )
@@ -154,6 +159,7 @@ async def run():
             return
         director.focus(session_id)
         await bridge.send({"type": "focus", "id": session_id})
+        await bridge.send({"type": "owned", "ids": director.owned_ids()})
 
     async def on_start_agent(msg):
         cwd = (msg.get("cwd") or "").strip()

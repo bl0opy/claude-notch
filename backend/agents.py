@@ -39,6 +39,9 @@ class AgentDirector:
     """One focus, many agents."""
 
     def __init__(self, primary: ClaudeCodeSession, watch_interval_s: float = 1.0):
+        # Told whenever the set of agents the notch started changes — only those
+        # can be interrupted or approved here, and the shell has to know which.
+        self.on_owned_change = None
         self._owned: dict[str, Owned] = {}
         self._primary = primary
         self._events: asyncio.Queue[Event] = asyncio.Queue()
@@ -73,6 +76,7 @@ class AgentDirector:
         if self.focused is None:
             self.focused = holder.id
         holder.pump = asyncio.create_task(self._pump(holder))
+        self._announce_owned()
         return holder
 
     async def start_agent(self, cwd: str) -> None:
@@ -103,6 +107,14 @@ class AgentDirector:
         holder.session_id = session_id
         if self.focused == was:
             self.focused = session_id
+        self._announce_owned()
+
+    def owned_ids(self) -> list[str]:
+        return [o.id for o in self._owned.values()]
+
+    def _announce_owned(self):
+        if self.on_owned_change:
+            self.on_owned_change(self.owned_ids())
 
     def _holder(self, agent_id: str | None) -> Owned | None:
         if not agent_id:

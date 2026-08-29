@@ -46,6 +46,40 @@ out of whatever does get spoken. Permission questions are spoken as
 
 Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 
+## Every agent, in the notch
+
+The notch lists every Claude Code session on the machine — project, branch, what
+it's doing, tokens spent — worst state first, so an agent blocked on a permission
+prompt sits at the top. Click a row to focus it: the focused agent is the one that
+hears the mic and the only one that speaks. Everything else works silently and
+gets a one-line interjection when it blocks or finishes.
+
+```bash
+.venv/bin/python -m agentsd --once   # print one snapshot and exit
+scripts/install-agentsd.sh           # run it at login (launchd, port 8767)
+```
+
+Agents come in two kinds, and the notch is explicit about which is which:
+
+| | started by the notch | started in a terminal |
+|---|---|---|
+| listed, with live state and tokens | yes | yes |
+| focus, talk to it, hear it back | yes | yes |
+| interrupt | yes | no — `stop` reads `can't stop` |
+| approve or deny by voice | yes | no — announced, answered in its terminal |
+
+Talking to a terminal session goes over the peer socket Claude Code already
+serves (`/tmp/cc-socks/<pid>.sock`, authenticated with that session's own key
+file) and its answer is read back from its transcript. If it's mid-turn the words
+are held and delivered the moment it's free, so nothing lands as a dialog in a
+window you aren't looking at. Answering *its* permission prompts isn't possible
+from outside — that's a Claude Code limit, not a missing feature — which is why
+the notch can start agents of its own.
+
+Both are undocumented surfaces (`~/.claude/sessions/` and the peer socket),
+verified against 2.1.251. When either changes, rows degrade to `unknown` and the
+roster keeps working rather than the daemon crashing.
+
 ## Layout
 
 | Path | What |
@@ -55,12 +89,17 @@ Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
 | `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
 | `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
+| `backend/agents.py` | Who has focus; routes a spoken turn to the right agent |
+| `agentsd/` | Watches every session, serves the roster, talks to foreign ones |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
 | `backend/approvals.py` | Holds a blocked hook until the answer comes back |
 | `hooks/approve.py` | `PreToolUse` hook — decides what needs asking about |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
+| `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |
+| `scripts/peer_smoke.py` | Proves a foreign session can be messaged and heard |
+| `scripts/director_smoke.py` | Proves focus routing, owned and foreign, no audio |
 
 ## WebSocket protocol
 
@@ -77,6 +116,8 @@ Backend → shell:
 {"type": "approval_closed", "id": "...", "approved": true}
 {"type": "mic",             "open": true}
 {"type": "session",         "id": "...", "cwd": "..."}
+{"type": "focus",           "id": "<session id>"}
+{"type": "delivery",        "id": "...", "status": "queued|delivered|refused"}
 {"type": "error",           "message": "..."}
 ```
 
@@ -84,10 +125,12 @@ Shell → backend:
 
 ```json
 {"type": "interrupt"}
-{"type": "text",    "text": "typed turn, same path as a spoken one"}
-{"type": "say",     "text": "speak this verbatim"}
-{"type": "ptt",     "down": true}
-{"type": "approve", "approved": true}
+{"type": "text",        "text": "typed turn, same path as a spoken one"}
+{"type": "say",         "text": "speak this verbatim"}
+{"type": "ptt",         "down": true}
+{"type": "approve",     "approved": true}
+{"type": "focus",       "id": "<session id>"}
+{"type": "start_agent", "cwd": "/path/to/a/repo"}
 ```
 
 ## Config
@@ -95,7 +138,9 @@ Shell → backend:
 All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
 `APPROVAL_PORT`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `SPOKEN_SENTENCES`,
-`WS_HOST`, `WS_PORT`. `PTT_KEY` is read by the shell, not the backend, so it has
+`WS_HOST`, `WS_PORT`. The agents daemon reads `AGENTS_WS_PORT` (8767),
+`AGENTS_TICK_S` and `AGENTS_SEND_DETAILS` (set 0 to keep prompt text and tool
+arguments off the socket). `PTT_KEY` is read by the shell, not the backend, so it has
 to be in the environment `run.sh` starts the app from (or `defaults write` it).
 
 ### Approvals
