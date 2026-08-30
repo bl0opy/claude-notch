@@ -27,7 +27,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         client = BridgeClient()
         client.onMessage = { [weak self] message in self?.state.apply(message) }
         client.onConnectionChange = { [weak self] connected in
-            if !connected { self?.state.phase = .disconnected }
+            guard let self else { return }
+            if connected {
+                // Ask for what the shell can't infer after a reconnect: who has
+                // the mic, and which agents the backend started.
+                self.client.send(["type": "hello"])
+            } else {
+                self.state.phase = .disconnected
+            }
         }
         state.attach(client)
         client.connect()
@@ -38,7 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentsClient = BridgeClient(url: URL(string: "ws://127.0.0.1:8767")!)
         agentsClient.onMessage = { [weak self] message in self?.state.apply(message) }
         agentsClient.onConnectionChange = { [weak self] connected in
-            if !connected { self?.state.clearRoster() }
+            if connected {
+                self?.state.rosterConnected = true
+            } else {
+                self?.state.clearRoster()
+            }
         }
         agentsClient.connect()
 
@@ -65,6 +76,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
         ).target = self
         menu.addItem(.separator())
+        menu.addItem(
+            withTitle: "Agents dashboard", action: #selector(showAgents), keyEquivalent: ""
+        ).target = self
+        menu.addItem(
+            withTitle: "New agent…", action: #selector(newAgent), keyEquivalent: ""
+        ).target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         statusItem = item
@@ -80,6 +98,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func interrupt() {
         state.interrupt()
+    }
+
+    @objc private func showAgents() {
+        state.show(.agents)
+    }
+
+    @objc private func newAgent() {
+        guard let path = ProjectPicker.chooseDirectory(startingAt: state.sessionCwd) else { return }
+        state.startAgent(in: path)
+        state.show(.agents)
     }
 }
 

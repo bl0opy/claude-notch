@@ -34,6 +34,19 @@ nothing binds right ⌥ on its own, so it never doubles as a shortcut. Holding i
 while Claude is talking cuts it off. Needs Accessibility permission. Set
 `PUSH_TO_TALK=0` for the old always-on mic.
 
+**The key ends the turn, not the silence.** Flux calls end-of-turn on every
+pause, so thinking mid-sentence used to send half a question. While the key is
+down those pieces are collected and the notch shows them building up; the turn
+is sent when you let go, plus `PTT_TAIL_MS` (400) for the words that arrive
+after the key is already up.
+
+Talking again while it's still working **steers** it, the way typing at Claude
+Code mid-turn does: the in-flight turn is interrupted and the new one goes in
+its place. Nothing waits for a turn to finish first. A session running in a
+terminal can't be steered — it has no input we can cut into — so words for a
+busy one are held and delivered when it frees up, and given up on after two
+minutes rather than held forever.
+
 Pick a different key with `PTT_KEY` (env, or `PTTKey` in defaults):
 `rightOption` (default), `rightCommand`, `fn`, `leftOption`, `command`. `command`
 is the old behaviour — it has to be held alone for 200 ms and any other key
@@ -44,15 +57,25 @@ shows the full answer, and `backend/speech.py` strips code, diffs and markdown
 out of whatever does get spoken. Permission questions are spoken as
 "I need your approval for deleting some files"; the actual command stays on screen.
 
-Hover the notch to expand. `stop` (or ⌥Space anywhere) interrupts.
+Hover the notch to expand, click it to pin it open. `stop` (or ⌥Space anywhere)
+interrupts.
 
 ## Every agent, in the notch
 
-The notch lists every Claude Code session on the machine — project, branch, what
-it's doing, tokens spent — worst state first, so an agent blocked on a permission
-prompt sits at the top. Click a row to focus it: the focused agent is the one that
-hears the mic and the only one that speaks. Everything else works silently and
-gets a one-line interjection when it blocks or finishes.
+The expanded panel has two tabs. **focus** is the agent you're talking to — what
+you said, what it said, what it's doing. **agents** is the dashboard: every
+Claude Code session on the machine, project, branch, what it's doing, tokens
+spent, worst state first, so an agent blocked on a permission prompt sits at the
+top. Click a row to focus it: the focused agent is the one that hears the mic and
+the only one that speaks. Everything else works silently and gets a one-line
+interjection when it blocks or finishes. The dashboard is also on the menu bar
+item, and the count beside the status dot opens it.
+
+**+ agent** on the dashboard (or *New agent…* in the menu) picks a repo and
+starts an agent there, owned by the notch — which is what makes it steerable and
+its permission prompts answerable by voice. The status dot count and the roster
+come from the agents daemon; if it isn't running the dashboard says so instead of
+showing nothing.
 
 ```bash
 .venv/bin/python -m agentsd --once   # print one snapshot and exit
@@ -96,6 +119,7 @@ roster keeps working rather than the daemon crashing.
 | `hooks/approve.py` | `PreToolUse` hook — decides what needs asking about |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
+| `shell/.../ProjectPicker.swift` | Directory picker behind `+ agent` |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
 | `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |
 | `scripts/peer_smoke.py` | Proves a foreign session can be messaged and heard |
@@ -131,13 +155,14 @@ Shell → backend:
 {"type": "approve",     "approved": true}
 {"type": "focus",       "id": "<session id>"}
 {"type": "start_agent", "cwd": "/path/to/a/repo"}
+{"type": "hello"}       // on connect: replay owned ids, focus and cwd
 ```
 
 ## Config
 
 All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
-`APPROVAL_PORT`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `SPOKEN_SENTENCES`,
+`APPROVAL_PORT`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
 `WS_HOST`, `WS_PORT`. The agents daemon reads `AGENTS_WS_PORT` (8767),
 `AGENTS_TICK_S` and `AGENTS_SEND_DETAILS` (set 0 to keep prompt text and tool
 arguments off the socket). `PTT_KEY` is read by the shell, not the backend, so it has

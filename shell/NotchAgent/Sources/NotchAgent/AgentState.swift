@@ -46,6 +46,11 @@ struct ToolEvent: Identifiable {
     var status: Status = .running
 }
 
+/// The panel shows one thing at a time: the agent you're talking to, or all of them.
+enum PanelMode: String {
+    case focus, agents
+}
+
 @MainActor
 final class AgentState: ObservableObject {
     @Published var phase: AgentPhase = .disconnected
@@ -66,6 +71,14 @@ final class AgentState: ObservableObject {
     @Published var rosterDegraded: Bool = false
     /// Sessions the voice backend started, which is what makes them interruptible.
     @Published var ownedIds: Set<String> = []
+    /// Which half of the panel is showing.
+    @Published var panel: PanelMode = .focus
+    /// Held open regardless of the cursor — click the notch to pin it, which is
+    /// what makes the dashboard usable while you work somewhere else.
+    @Published var pinned: Bool = false
+    /// Whether the agents daemon is answering at all, which is a different thing
+    /// from there being no agents.
+    @Published var rosterConnected: Bool = false
 
     /// A foreign agent — one started in a terminal — can be talked to but not
     /// interrupted, and its permission questions are answered where it runs.
@@ -78,7 +91,7 @@ final class AgentState: ObservableObject {
 
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
-    var expanded: Bool { hovering || micOpen || phase == .thinking || approval != nil }
+    var expanded: Bool { hovering || pinned || micOpen || phase == .thinking || approval != nil }
 
     private var client: BridgeClient?
 
@@ -96,8 +109,13 @@ final class AgentState: ObservableObject {
             }
         case "transcript":
             userTranscript = message["text"] as? String ?? ""
-            assistantText = ""
-            tools = []
+            // Partials land while the key is still held — the turn isn't sent
+            // yet, so the last answer stays up until it is.
+            if message["final"] as? Bool ?? true {
+                assistantText = ""
+                tools = []
+                panel = .focus
+            }
         case "assistant_delta":
             assistantText += message["text"] as? String ?? ""
         case "assistant_done":
@@ -154,6 +172,17 @@ final class AgentState: ObservableObject {
     func clearRoster() {
         agents = []
         rosterDegraded = false
+        rosterConnected = false
+    }
+
+    func show(_ mode: PanelMode) {
+        panel = mode
+        pinned = true
+    }
+
+    /// Start a new agent in a directory of your choosing, owned by the notch.
+    func startAgent(in cwd: String) {
+        client?.send(["type": "start_agent", "cwd": cwd])
     }
     func setTalking(_ down: Bool) {
         micOpen = down

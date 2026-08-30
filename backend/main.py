@@ -178,6 +178,20 @@ async def run():
             logger.error(f"could not start an agent in {cwd}: {e}")
             await bridge.send({"type": "error", "message": f"could not start an agent: {e}"})
 
+    async def on_hello(_msg):
+        """A shell that just connected doesn't know any of this yet."""
+        await bridge.send({"type": "owned", "ids": director.owned_ids()})
+        if director.focused:
+            await bridge.send({"type": "focus", "id": director.focused})
+        if director.focused_session:
+            await bridge.send(
+                {
+                    "type": "session",
+                    "id": director.focused,
+                    "cwd": director.cwd_of(director.focused),
+                }
+            )
+
     async def on_say(msg):
         text = (msg.get("text") or "").strip()
         if text:
@@ -191,6 +205,7 @@ async def run():
     bridge.on("start_agent", on_start_agent)
     bridge.on("text", on_text)
     bridge.on("say", on_say)
+    bridge.on("hello", on_hello)
 
     runner = PipelineRunner(handle_sigint=True)
     try:
