@@ -11,6 +11,7 @@ to foreign agents — the roster keeps working.
 """
 import asyncio
 import json
+import time
 from dataclasses import dataclass
 
 from loguru import logger
@@ -27,6 +28,11 @@ PROTOCOL = 1
 # registers without a status at all, and refusing to talk to it would be worse
 # than letting the far end decide.
 HOLD_WHEN = {"working"}
+
+# How long a held message waits for a busy session before it is given up on.
+# A foreign agent can't be steered — it has no input channel we can cut into —
+# so the only alternative to a deadline is holding words forever.
+HOLD_TTL_S = 120.0
 
 
 @dataclass
@@ -96,8 +102,10 @@ async def deliver(socket_path: str, pid: int, session_id: str, text: str) -> Rec
 class Messenger:
     """Holds messages for busy agents and delivers them the moment they're free."""
 
-    def __init__(self):
-        self._held: dict[str, list[str]] = {}
+    def __init__(self, hold_ttl_s: float = HOLD_TTL_S):
+        # session id -> [(text, held since)]
+        self._held: dict[str, list[tuple[str, float]]] = {}
+        self._ttl = hold_ttl_s
 
     def pending(self, session_id: str) -> int:
         return len(self._held.get(session_id, []))
@@ -107,7 +115,7 @@ class Messenger:
         if not session.reachable:
             return Receipt(session.session_id, "refused", "no messaging socket")
         if session.state in HOLD_WHEN:
-            self._held.setdefault(session.session_id, []).append(text)
+            self._held.setdefault(session.session_id, []).append((text, time.monotonic()))
             logger.info(f"holding a message for {session.name or session.session_id} until it's idle")
             return Receipt(session.session_id, "queued", "busy")
         return await deliver(session.socket_path, session.pid, session.session_id, text)
@@ -116,16 +124,26 @@ class Messenger:
         """Called each tick with the live roster; flushes what can now land."""
         receipts = []
         by_id = {s.session_id: s for s in sessions}
-        for session_id, texts in list(self._held.items()):
+        now = time.monotonic()
+        for session_id, items in list(self._held.items()):
             session = by_id.get(session_id)
             if not session:
                 del self._held[session_id]
                 receipts.append(Receipt(session_id, "refused", "session ended"))
                 continue
             if session.state in HOLD_WHEN:
+                stale = [t for t, since in items if now - since >= self._ttl]
+                fresh = [(t, since) for t, since in items if now - since < self._ttl]
+                if stale:
+                    self._held[session_id] = fresh
+                    if not fresh:
+                        del self._held[session_id]
+                    receipts.append(
+                        Receipt(session_id, "refused", f"still busy after {int(self._ttl)}s")
+                    )
                 continue
             del self._held[session_id]
-            for text in texts:
+            for text, _ in items:
                 receipts.append(
                     await deliver(session.socket_path, session.pid, session_id, text)
                 )

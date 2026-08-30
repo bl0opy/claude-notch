@@ -164,8 +164,15 @@ class AgentDirector:
         """Route a spoken turn to whoever has the mic. Returns a status word."""
         session = self.focused_session
         if session:
+            # Talking over an agent we started steers it, the way typing at
+            # Claude Code mid-turn does: cut the turn off, then say the new
+            # thing. Waiting for it to finish first is how you end up hanging.
+            steered = False
+            if session.busy:
+                await session.interrupt()
+                steered = True
             await session.send_user_text(text)
-            return "sent"
+            return "steered" if steered else "sent"
         row = self._live(self.focused or "")
         if not row:
             return "gone"

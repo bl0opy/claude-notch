@@ -46,6 +46,9 @@ class ClaudeCodeSession:
         self._reader_task: asyncio.Task | None = None
         self._stderr_task: asyncio.Task | None = None
         self._pending_control: dict[str, asyncio.Future] = {}
+        # True from the moment a turn is sent until its result comes back, which
+        # is what makes a second turn a steer rather than a queued one.
+        self.busy = False
 
     def _argv(self) -> list[str]:
         argv = [
@@ -102,6 +105,7 @@ class ClaudeCodeSession:
         await self.proc.stdin.drain()
 
     async def send_user_text(self, text: str):
+        self.busy = True
         await self._write(
             {
                 "type": "user",
@@ -109,9 +113,15 @@ class ClaudeCodeSession:
             }
         )
 
-    async def interrupt(self):
-        """Ask Claude Code to abort the in-flight turn."""
+    async def interrupt(self, wait_s: float = 2.0) -> bool:
+        """Ask Claude Code to abort the in-flight turn.
+
+        Waits for the control response, because the next thing that happens is
+        usually a new turn on the same stdin and it must not race the abort.
+        """
         request_id = f"req_{uuid.uuid4().hex[:12]}"
+        waiter: asyncio.Future = asyncio.get_running_loop().create_future()
+        self._pending_control[request_id] = waiter
         try:
             await self._write(
                 {
@@ -122,7 +132,17 @@ class ClaudeCodeSession:
             )
             logger.info("sent interrupt to claude code")
         except Exception as e:
+            self._pending_control.pop(request_id, None)
             logger.warning(f"interrupt failed: {e}")
+            return False
+        try:
+            await asyncio.wait_for(waiter, timeout=wait_s)
+            return True
+        except asyncio.TimeoutError:
+            logger.warning("no control response to the interrupt — carrying on")
+            return False
+        finally:
+            self._pending_control.pop(request_id, None)
 
     async def _read_stderr(self):
         assert self.proc
@@ -152,6 +172,12 @@ class ClaudeCodeSession:
 
     def _translate(self, msg: dict[str, Any]) -> list[dict[str, Any]]:
         mtype = msg.get("type")
+
+        if mtype == "control_response":
+            waiter = self._pending_control.get(msg.get("request_id", ""))
+            if waiter and not waiter.done():
+                waiter.set_result(msg.get("response", {}))
+            return []
 
         if mtype == "system" and msg.get("subtype") == "init":
             self.session_id = msg.get("session_id")
@@ -195,6 +221,7 @@ class ClaudeCodeSession:
             return out
 
         if mtype == "result":
+            self.busy = False
             return [
                 {
                     "kind": "turn_end",
