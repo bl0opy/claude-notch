@@ -105,7 +105,13 @@ async def run():
 
     director.on_owned_change = announce_owned
     brain = ClaudeCodeProcessor(
-        director, bridge, config.cancel_on_interrupt, approvals, config.spoken_sentences
+        director,
+        bridge,
+        config.cancel_on_interrupt,
+        approvals,
+        config.spoken_sentences,
+        hold_to_talk=config.push_to_talk,
+        hold_tail_ms=config.ptt_tail_ms,
     )
 
     ptt = PushToTalkGate() if config.push_to_talk else None
@@ -148,6 +154,7 @@ async def run():
             return
         down = bool(msg.get("down"))
         ptt.set_open(down)
+        await brain.set_mic(down)
         await bridge.send({"type": "mic", "open": down})
         # Holding the key while it's talking is how you cut it off.
         if down and bridge.last_state == "speaking":

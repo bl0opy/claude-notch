@@ -64,6 +64,8 @@ class ClaudeCodeProcessor(FrameProcessor):
         cancel_on_interrupt: bool,
         approvals: ApprovalServer | None = None,
         max_spoken_sentences: int = 2,
+        hold_to_talk: bool = False,
+        hold_tail_ms: int = 400,
     ):
         super().__init__()
         self._director = director
@@ -76,6 +78,14 @@ class ClaudeCodeProcessor(FrameProcessor):
         self._dropping = False
         self._pending_turns = 0
         self._raw = ""
+        # The key, not the silence, ends the turn: Flux fires end-of-turn on
+        # every pause, so a held key collects those pieces and sends one turn
+        # when it comes up. Off when there is no key to hold.
+        self._hold_to_talk = hold_to_talk
+        self._hold_tail = hold_tail_ms / 1000
+        self._mic_open = False
+        self._held: list[str] = []
+        self._drain: asyncio.Task | None = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
@@ -100,26 +110,96 @@ class ClaudeCodeProcessor(FrameProcessor):
             return
 
         if isinstance(frame, TranscriptionFrame) and frame.text.strip():
-            if await self._answered_approval(frame.text):
+            if self._hold_to_talk and (self._mic_open or self._drain):
+                self._collect(frame.text)
+                await self._bridge.send(
+                    {
+                        "type": "transcript",
+                        "role": "user",
+                        "text": " ".join(self._held),
+                        "final": False,
+                    }
+                )
                 return
-            await self._bridge.send(
-                {"type": "transcript", "role": "user", "text": frame.text, "final": True}
-            )
-            await self._bridge.state("thinking")
-            self._filter.reset()
-            self._raw = ""
-            try:
-                self._pending_turns += 1
-                status = await self._director.send_turn(frame.text)
-                if status == "queued":
-                    await self._speak_now("It's mid-turn — I'll pass that on when it's free.")
-            except Exception as e:
-                self._pending_turns -= 1
-                logger.error(f"failed to send turn to claude code: {e}")
-                await self._bridge.send({"type": "error", "message": str(e)})
+            await self._take_turn(frame.text)
             return
 
         await self.push_frame(frame, direction)
+
+    # ---- turns -----------------------------------------------------------
+
+    def _collect(self, text: str):
+        text = text.strip()
+        if text:
+            self._held.append(text)
+
+    async def set_mic(self, open_: bool):
+        """The push-to-talk key went down or came up.
+
+        Everything Flux hears between the two is one turn, however many pauses
+        it took — releasing the key is the only thing that ends it.
+        """
+        if open_ == self._mic_open:
+            return
+        self._mic_open = open_
+        if not self._hold_to_talk:
+            return
+        if open_:
+            # Pressing again before the tail ran out sends what's held rather
+            # than gluing two presses into one turn.
+            await self._flush_held()
+            return
+        # The last words of a hold arrive after the key is already up — Flux
+        # only calls end-of-turn once the audio stops — so give them a moment
+        # to land before the turn is sealed.
+        self._drain = asyncio.create_task(self._drain_held())
+
+    async def _drain_held(self):
+        try:
+            await asyncio.sleep(self._hold_tail)
+        except asyncio.CancelledError:
+            return
+        self._drain = None
+        text = " ".join(self._held).strip()
+        self._held = []
+        if text:
+            await self._take_turn(text)
+
+    async def _flush_held(self):
+        """Send whatever is held right now and stop waiting for more."""
+        if self._drain:
+            self._drain.cancel()
+            self._drain = None
+        text = " ".join(self._held).strip()
+        self._held = []
+        if text:
+            await self._take_turn(text)
+
+    async def _take_turn(self, text: str):
+        if await self._answered_approval(text):
+            return
+        await self._bridge.send(
+            {"type": "transcript", "role": "user", "text": text, "final": True}
+        )
+        await self._bridge.state("thinking")
+        self._filter.reset()
+        self._raw = ""
+        try:
+            self._pending_turns += 1
+            status = await self._director.send_turn(text)
+            if status == "steered":
+                # The turn it was in the middle of has been cut off, and that
+                # one still owes us a result — which will decrement for it.
+                self._dropping = False
+            elif status == "queued":
+                await self._speak_now("It's mid-turn — I'll pass that on when it's free.")
+            elif status == "gone":
+                self._pending_turns = max(0, self._pending_turns - 1)
+                await self._speak_now("That agent isn't running any more.")
+        except Exception as e:
+            self._pending_turns -= 1
+            logger.error(f"failed to send turn to claude code: {e}")
+            await self._bridge.send({"type": "error", "message": str(e)})
 
     async def _answered_approval(self, text: str) -> bool:
         """Consume a spoken yes/no while the focused agent has a question open."""
@@ -180,10 +260,7 @@ class ClaudeCodeProcessor(FrameProcessor):
 
     async def send_text_turn(self, text: str):
         """Typed input from the notch shell — same path as a spoken turn."""
-        await self.process_frame(
-            TranscriptionFrame(text=text, user_id="shell", timestamp=""),
-            FrameDirection.DOWNSTREAM,
-        )
+        await self._take_turn(text)
 
     async def _handle_interruption(self):
         if not self._responding and not self._dropping:
@@ -221,6 +298,11 @@ class ClaudeCodeProcessor(FrameProcessor):
 
             if kind == "delivery":
                 await self._bridge.send({k: v for k, v in event.items() if k != "kind"})
+                # A held message that never landed is worth a word — silence
+                # here is indistinguishable from having been heard.
+                if event.get("status") == "refused":
+                    where = os.path.basename(self._director.cwd_of(agent_id)) or "that agent"
+                    await self._speak_now(f"Couldn't get that to {where}.")
                 continue
 
             if kind == "ready":
