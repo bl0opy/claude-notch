@@ -64,7 +64,6 @@ class Config:
         default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
     )
     permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "auto"))
-    approval_port: int = field(default_factory=lambda: int(os.getenv("APPROVAL_PORT", "8766")))
     approval_timeout_s: float = field(
         default_factory=lambda: float(os.getenv("APPROVAL_TIMEOUT_S", "180"))
     )

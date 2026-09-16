@@ -12,7 +12,6 @@ from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
 from backend.agents import AgentDirector
-from backend.approvals import ApprovalServer
 from backend.audio_devices import resolve_device
 from backend.bridge import NotchBridge
 from backend.claude_code import ClaudeCodeSession
@@ -52,10 +51,9 @@ async def run():
     bridge = NotchBridge(config.ws_host, config.ws_port)
     await bridge.start()
 
-    approvals = ApprovalServer(config.ws_host, config.approval_port, config.approval_timeout_s)
-    await approvals.start()
-
-    hook = ROOT / "hooks" / "approve.py"
+    # Risky calls in the agents the notch starts are asked about in the agents
+    # daemon's inbox, alongside every terminal session's permission prompts.
+    hook = ROOT / "hooks" / "notch_hook.py"
     session = ClaudeCodeSession(
         cwd=config.claude_cwd,
         model=config.claude_model,
@@ -66,7 +64,14 @@ async def run():
                 "PreToolUse": [
                     {
                         "matcher": ".*",
-                        "hooks": [{"type": "command", "command": f"{sys.executable} {hook}"}],
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": f"/usr/bin/python3 {hook}",
+                                # Outlive the inbox's own wait, so the answer is what ends it.
+                                "timeout": int(config.approval_timeout_s) + 15,
+                            }
+                        ],
                     }
                 ]
             }
@@ -108,7 +113,7 @@ async def run():
         director,
         bridge,
         config.cancel_on_interrupt,
-        approvals,
+        None,
         config.spoken_sentences,
         hold_to_talk=config.push_to_talk,
         hold_tail_ms=config.ptt_tail_ms,
@@ -145,9 +150,6 @@ async def run():
         text = (msg.get("text") or "").strip()
         if text:
             await brain.send_text_turn(text)
-
-    async def on_approve(msg):
-        await brain.resolve_approval(bool(msg.get("approved")), "from the notch")
 
     async def on_ptt(msg):
         if not ptt:
@@ -197,8 +199,6 @@ async def run():
         if text:
             await task.queue_frame(TTSSpeakFrame(text))
 
-    approvals.on_ask(brain.ask_approval)
-    bridge.on("approve", on_approve)
     bridge.on("interrupt", on_interrupt)
     bridge.on("ptt", on_ptt)
     bridge.on("focus", on_focus)
@@ -211,7 +211,6 @@ async def run():
     try:
         await runner.run(task)
     finally:
-        await approvals.stop()
         await bridge.stop()
         await session.stop()
     return 0

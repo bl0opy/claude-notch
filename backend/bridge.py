@@ -26,7 +26,7 @@ class NotchBridge:
         # What a client is told the moment it connects. The voice backend replays
         # its state; the agents daemon replays its last roster instead, and must
         # not send a state frame at all — the notch's phase belongs to the voice.
-        self._hello: Callable[[], dict[str, Any] | None] | None = None
+        self._hello: Callable[[], dict[str, Any] | list[dict[str, Any]] | None] | None = None
 
     @property
     def last_state(self) -> str:
@@ -35,7 +35,7 @@ class NotchBridge:
     def on(self, msg_type: str, handler: Handler):
         self._handlers[msg_type] = handler
 
-    def on_connect(self, hello: Callable[[], dict[str, Any] | None]):
+    def on_connect(self, hello: Callable[[], dict[str, Any] | list[dict[str, Any]] | None]):
         self._hello = hello
 
     async def start(self):
@@ -52,8 +52,9 @@ class NotchBridge:
         logger.info(f"shell connected ({len(self._clients)} client(s))")
         try:
             hello = self._hello() if self._hello else {"type": "state", "value": self._last_state}
-            if hello:
-                await ws.send(json.dumps(hello))
+            for frame in hello if isinstance(hello, list) else [hello]:
+                if frame:
+                    await ws.send(json.dumps(frame))
             async for raw in ws:
                 try:
                     msg = json.loads(raw)

@@ -13,9 +13,7 @@ listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 [ -f .env ] || die "no .env — copy .env.example to .env and fill in your keys"
 [ -x "$PY" ] || die "no .venv — pyenv local 3.11.6 && python -m venv .venv (see README)"
 command -v claude >/dev/null || die "claude isn't on PATH"
-for port in 8765 8766; do
-  listening "$port" && die "port $port is taken — a backend is already running (lsof -iTCP:$port)"
-done
+listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
 
 # SwiftPM bakes absolute paths into its module cache, so a moved repo fails to
 # build until the cache is gone.
@@ -44,6 +42,8 @@ trap 'exit 130' INT TERM
 
 if listening 8767; then
   echo "agents daemon already running on :8767"
+elif listening 8766; then
+  die "port 8766 is taken but no agents daemon on :8767 — an old backend? (lsof -iTCP:8766)"
 else
   "$PY" -m agentsd &
   PIDS+=($!)

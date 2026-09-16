@@ -17,7 +17,6 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from backend.approvals import ApprovalServer
 from backend.bridge import NotchBridge
 from backend.agents import AgentDirector
 from backend.speech import SpeechFilter
@@ -62,7 +61,7 @@ class ClaudeCodeProcessor(FrameProcessor):
         director: AgentDirector,
         bridge: NotchBridge,
         cancel_on_interrupt: bool,
-        approvals: ApprovalServer | None = None,
+        approvals=None,
         max_spoken_sentences: int = 2,
         hold_to_talk: bool = False,
         hold_tail_ms: int = 400,
