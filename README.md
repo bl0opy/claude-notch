@@ -55,7 +55,7 @@ cancels it, since ⌘ is half of every shortcut on the machine.
 It speaks at most two sentences per turn (`SPOKEN_SENTENCES`) — the notch still
 shows the full answer, and `backend/speech.py` strips code, diffs and markdown
 out of whatever does get spoken. Permission questions are spoken as
-"I need your approval for deleting some files"; the actual command stays on screen.
+"orbit wants to push to git"; the actual command stays on screen.
 
 Hover the notch to expand, click it to pin it open. `stop` (or ⌥Space anywhere)
 interrupts.
@@ -68,18 +68,21 @@ Claude Code session on the machine, project, branch, what it's doing, tokens
 spent, worst state first, so an agent blocked on a permission prompt sits at the
 top. Click a row to focus it: the focused agent is the one that hears the mic and
 the only one that speaks. Everything else works silently and gets a one-line
-interjection when it blocks or finishes. The dashboard is also on the menu bar
-item, and the count beside the status dot opens it.
+interjection when it asks for something or finishes a long turn. Hover a row for
+**↗** (bring its terminal forward) and **■** (stop it, for agents the notch
+started). The dashboard is also on the menu bar item, and the count beside the
+status dot opens it.
 
 **+ agent** on the dashboard (or *New agent…* in the menu) picks a repo and
 starts an agent there, owned by the notch — which is what makes it steerable and
-its permission prompts answerable by voice. The status dot count and the roster
+interruptible. The status dot count and the roster
 come from the agents daemon; if it isn't running the dashboard says so instead of
 showing nothing.
 
 ```bash
 .venv/bin/python -m agentsd --once   # print one snapshot and exit
-scripts/install-agentsd.sh           # run it at login (launchd, port 8767)
+scripts/install-agentsd.sh           # run it at login (launchd, ports 8767 + 8766)
+scripts/install-hooks.sh             # answer every session's permission prompts from the notch
 ```
 
 Agents come in two kinds, and the notch is explicit about which is which:
@@ -89,15 +92,66 @@ Agents come in two kinds, and the notch is explicit about which is which:
 | listed, with live state and tokens | yes | yes |
 | focus, talk to it, hear it back | yes | yes |
 | interrupt | yes | no — `stop` reads `can't stop` |
-| approve or deny by voice | yes | no — announced, answered in its terminal |
+| approve or deny from the notch, by voice or key | yes | yes, with `install-hooks.sh` |
 
 Talking to a terminal session goes over the peer socket Claude Code already
 serves (`/tmp/cc-socks/<pid>.sock`, authenticated with that session's own key
 file) and its answer is read back from its transcript. If it's mid-turn the words
 are held and delivered the moment it's free, so nothing lands as a dialog in a
-window you aren't looking at. Answering *its* permission prompts isn't possible
-from outside — that's a Claude Code limit, not a missing feature — which is why
+window you aren't looking at. It can't be interrupted from outside, which is why
 the notch can start agents of its own.
+
+## Every permission prompt, in one place
+
+`scripts/install-hooks.sh` adds one hook to `~/.claude/settings.json` (a copy of
+`hooks/notch_hook.py` in `~/.claude/hooks`, run by the system python, so it
+survives the repo moving). It applies to every Claude Code session, including ones
+already running. `--uninstall` takes it out again, and the file is backed up to
+`settings.json.bak-notch` either way.
+
+When a session would ask you something, its dialog comes up in its terminal as
+usual **and** the same question shows in the notch. Answer in either place;
+the other one closes. With the agents daemon down the hook does nothing and
+the terminal is the only place to answer, same as before.
+
+The notch opens on its own for a new question, oldest first: the project, the
+exact command or path, and **allow** / **always** / **deny** / **↗**. Anything
+else waiting sits underneath as one line with ✓ ✕. **hide** closes the panel
+until the next new question; the amber count stays in the collapsed notch.
+
+From any app:
+
+| | |
+|---|---|
+| ⌃⌥Y / ⌃⌥N | allow / deny the oldest question |
+| ⌃⌥J | bring the terminal it came from to the front |
+| ⌥Space | interrupt the focused agent |
+
+By voice (hold right ⌥). These are matched before anything goes to the agent,
+so they're instant:
+
+| say | does |
+|---|---|
+| "yes", "go ahead" / "no", "nope" | answers the oldest question |
+| "approve orbit", "deny bus tracker" | answers that project's question |
+| "always allow orbit" | allow and keep the rule Claude Code suggested |
+| "what's waiting" | one sentence: who's asking what, who's working |
+| "go to descant", "back" | hand an agent the mic, or return it to the voice agent |
+| "stop orbit" | interrupt it, if the notch started it |
+
+A bare "yes" won't pass a destructive command (`rm -rf`, `git push`,
+`reset --hard`, `sudo`, package installs…): the notch says "that one wants to
+push to git — say approve orbit" and waits for the name. Four words or fewer
+counts as a bare answer, so "ok but first rename it" still goes to the agent.
+
+Out loud you get "orbit wants to push to git" when a question arrives and
+"orbit is done" when a turn of 30 s or more finishes somewhere you aren't
+focused. Several at once are said together, never while you're holding the key
+or it's already talking, and a question answered before it gets a word in isn't
+said at all.
+
+↗ picks the exact tab in Terminal and iTerm2 (macOS asks for Automation
+permission the first time). VS Code, Cursor and the rest just come to the front.
 
 Both are undocumented surfaces (`~/.claude/sessions/` and the peer socket),
 verified against 2.1.251. When either changes, rows degrade to `unknown` and the
@@ -113,17 +167,24 @@ roster keeps working rather than the daemon crashing.
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
 | `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
 | `backend/agents.py` | Who has focus; routes a spoken turn to the right agent |
+| `backend/commands.py` | Spoken fleet commands — approve, deny, status, go to, stop |
+| `backend/fleet.py` | The backend's link to the agents daemon: roster, questions, events |
 | `agentsd/` | Watches every session, serves the roster, talks to foreign ones |
+| `agentsd/inbox.py` | Every open permission question, held until it's answered somewhere |
+| `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
-| `backend/approvals.py` | Holds a blocked hook until the answer comes back |
-| `hooks/approve.py` | `PreToolUse` hook — decides what needs asking about |
+| `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
 | `shell/.../ProjectPicker.swift` | Directory picker behind `+ agent` |
+| `shell/.../Jump.swift` | Brings a session's terminal to the front |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
 | `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |
 | `scripts/peer_smoke.py` | Proves a foreign session can be messaged and heard |
 | `scripts/director_smoke.py` | Proves focus routing, owned and foreign, no audio |
+| `scripts/inbox_smoke.py` | Proves the inbox with the real hook: concurrency, fallbacks, cleanup |
+| `scripts/commands_smoke.py` | Table test for the spoken command grammar |
+| `scripts/fleet_smoke.py` | Voice answering questions end to end, speech captured |
 
 ## WebSocket protocol
 
@@ -136,8 +197,6 @@ Backend → shell:
 {"type": "assistant_done",  "text": "<full raw turn>"}
 {"type": "tool",            "id": "...", "name": "Edit", "summary": "editing", "detail": "..."}
 {"type": "tool_result",     "id": "...", "ok": true, "text": "..."}
-{"type": "approval",        "id": "...", "tool": "Bash", "reason": "...", "summary": "deleting some files"}
-{"type": "approval_closed", "id": "...", "approved": true}
 {"type": "mic",             "open": true}
 {"type": "session",         "id": "...", "cwd": "..."}
 {"type": "focus",           "id": "<session id>"}
@@ -148,36 +207,58 @@ Backend → shell:
 Shell → backend:
 
 ```json
-{"type": "interrupt"}
+{"type": "interrupt",   "id": "<optional session id — a row's stop button>"}
 {"type": "text",        "text": "typed turn, same path as a spoken one"}
 {"type": "say",         "text": "speak this verbatim"}
 {"type": "ptt",         "down": true}
-{"type": "approve",     "approved": true}
 {"type": "focus",       "id": "<session id>"}
 {"type": "start_agent", "cwd": "/path/to/a/repo"}
 {"type": "hello"}       // on connect: replay owned ids, focus and cwd
 ```
 
+Agents daemon (`ws://127.0.0.1:8767`) → shell and backend:
+
+```json
+{"type": "agents",      "list": [{"id": "...", "project": "...", "state": "waiting", "tty": "ttys003", "host": "Terminal", "...": "..."}]}
+{"type": "approvals",   "list": [{"id": "...", "source": "terminal|owned", "sessionId": "...", "pid": 123,
+                                  "project": "orbit", "tool": "Bash", "detail": "git push", "summary": "push to git",
+                                  "risky": true, "canAlways": false, "created": 1789578000000}]}
+{"type": "fleet_event", "event": "done", "sessionId": "...", "project": "orbit", "long": true}
+```
+
+Shell or backend → agents daemon:
+
+```json
+{"type": "approve", "id": "...", "approved": true, "always": false, "how": "from the notch"}
+```
+
+The hook talks to the daemon on `127.0.0.1:8766`: one JSON line describing the
+call, one line back — `{"decision": "allow|deny|none", "reason": "...", "permissions": [...]}`.
+
 ## Config
 
 All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
-`APPROVAL_PORT`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
+`AGENTS_URL`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
 `WS_HOST`, `WS_PORT`. The agents daemon reads `AGENTS_WS_PORT` (8767),
-`AGENTS_TICK_S` and `AGENTS_SEND_DETAILS` (set 0 to keep prompt text and tool
-arguments off the socket). `PTT_KEY` is read by the shell, not the backend, so it has
+`AGENTS_TICK_S`, `AGENTS_SEND_DETAILS` (set 0 to keep prompt text and tool
+arguments off the socket), `NOTCH_INBOX_PORT` (8766), `APPROVAL_TIMEOUT_S` and
+`NOTCH_TERMINAL_WAIT_S` (590 — how long a terminal session's question stays in
+the notch; its own dialog stays regardless). `PTT_KEY` is read by the shell, not the backend, so it has
 to be in the environment `run.sh` starts the app from (or `defaults write` it).
 
 ### Approvals
 
-`CLAUDE_PERMISSION_MODE` defaults to `auto`. A `PreToolUse` hook (`hooks/approve.py`)
-gates the risky minority — `rm -rf`, `sudo`, `git push`/`reset --hard`, package
-installs, writes outside the project, `WebFetch` — and lets everything else through
-so auto mode stays quiet. When it fires, the agent asks out loud and the notch shows
-Approve/Deny; saying "yeah" or "nope" answers it, and so does the button.
-`APPROVAL_TIMEOUT_S` (default 180) denies on silence so a turn can't wedge.
+Agents the notch starts run in `CLAUDE_PERMISSION_MODE` (default `auto`), with
+no dialog of their own. `hooks/notch_hook.py`, given to them as a `PreToolUse`
+hook, sends the risky minority — `rm -rf`, `sudo`, `git push`/`reset --hard`,
+package installs, writes outside the project, `WebFetch` — to the same inbox as
+every terminal session's prompts, and lets everything else through so auto mode
+stays quiet. There's nowhere else to answer those, so they fail closed: no answer
+in `APPROVAL_TIMEOUT_S` (180), or no agents daemon at all, is a deny.
 
-Edit `RISKY_BASH` and `risk()` in `hooks/approve.py` to change what gets gated.
+Edit `RISKY_BASH` in `hooks/notch_hook.py` and `agentsd/risk.py` together to
+change what gets gated and what counts as destructive.
 
 One limit worth knowing: the hook can *veto* a tool call, but a hook `allow`
 does not override Claude Code's own refusals. Verified against the CLI: approving

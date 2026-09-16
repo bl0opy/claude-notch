@@ -66,5 +66,5 @@ if [ "$MODE" = "--uninstall" ]; then
   echo "removed the notch hooks from $SETTINGS (backup: $SETTINGS.bak-notch)"
 else
   echo "installed $HOOK into $SETTINGS (backup: $SETTINGS.bak-notch)"
-  echo "new sessions pick it up; restart any already running to be sure"
+  echo "running sessions pick it up too — it does nothing until the agents daemon is up"
 fi

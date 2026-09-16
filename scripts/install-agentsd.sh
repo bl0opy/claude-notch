@@ -14,3 +14,6 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$TARGET"
 launchctl kickstart -k "gui/$(id -u)/$LABEL"
 echo "installed $TARGET — logs at ~/Library/Logs/notch-agentsd.log"
+if ! grep -q notch_hook.py "$HOME/.claude/settings.json" 2>/dev/null; then
+  echo "to answer every session's permission prompts from the notch: scripts/install-hooks.sh"
+fi
