@@ -57,8 +57,20 @@ shows the full answer, and `backend/speech.py` strips code, diffs and markdown
 out of whatever does get spoken. Permission questions are spoken as
 "orbit wants to push to git"; the actual command stays on screen.
 
-Hover the notch to expand, click it to pin it open. `stop` (or ⌥Space anywhere)
-interrupts.
+The notch behaves like a Dynamic Island. When nothing is working, waiting or
+talking for 8 s it folds into the hardware notch and disappears. Anything
+starting up brings it back as a small pill: status on the left, Claw'd on the
+right. Hover it (or the bare notch) and one black shape springs open into the
+panel; a new permission question opens it by itself. Click to pin it open.
+`stop` (or ⌥Space anywhere) interrupts.
+
+Claw'd shows the mood of the whole fleet: he hops while anything is working,
+paces while something waits on you, stands still and looks up while the mic is
+open, bobs while talking, and otherwise blinks, glances around and shuffles —
+falling asleep, grey with the odd z, after 45 s of quiet.
+
+`MOCK_SCENE=cycle .venv/bin/python scripts/mock_agents.py` walks through
+questions → working → idle every 40 s, to watch it open, shrink and fold.
 
 ## Every agent, in the notch
 

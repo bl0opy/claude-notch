@@ -57,7 +57,7 @@ final class AgentState: ObservableObject {
     /// Questions you've waved away for now. The panel stops opening for them,
     /// and opens again for the next new one.
     @Published var snoozed: Set<String> = []
-    @Published var hovering: Bool = false
+    @Published var hovering: Bool = false { didSet { settle() } }
     /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
     @Published var micOpen: Bool = false
@@ -72,7 +72,7 @@ final class AgentState: ObservableObject {
     @Published var panel: PanelMode = .focus
     /// Held open regardless of the cursor — click the notch to pin it, which is
     /// what makes the dashboard usable while you work somewhere else.
-    @Published var pinned: Bool = false
+    @Published var pinned: Bool = false { didSet { settle() } }
     /// Whether the agents daemon is answering at all, which is a different thing
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
@@ -89,6 +89,49 @@ final class AgentState: ObservableObject {
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
     var expanded: Bool { hovering || pinned || micOpen || phase == .thinking || !unseenApprovals.isEmpty }
+
+    /// Folded into the hardware notch: nothing is working, waiting or talking,
+    /// and hasn't been for a few seconds. Hover the notch to bring it back.
+    @Published private(set) var dormant = false
+    /// When the fleet last had something going on.
+    @Published private(set) var lastBusy = Date()
+
+    /// Anything that deserves the notch being visible.
+    var busy: Bool {
+        if micOpen || !approvals.isEmpty { return true }
+        if [.thinking, .speaking, .waiting, .error].contains(phase) { return true }
+        return agents.contains { $0.state == .working || $0.state == .waiting }
+    }
+
+    var mood: CrabMood {
+        if phase == .error { return .error }
+        if micOpen { return .listening }
+        if phase == .speaking { return .speaking }
+        if !approvals.isEmpty || phase == .waiting || agents.contains(where: { $0.state == .waiting }) {
+            return .waiting
+        }
+        if phase == .thinking || agents.contains(where: { $0.state == .working }) { return .thinking }
+        return Date().timeIntervalSince(lastBusy) > Self.sleepAfter ? .asleep : .idle
+    }
+
+    private static let foldAfter: TimeInterval = 8
+    private static let sleepAfter: TimeInterval = 45
+    private var clock: Timer?
+
+    /// Re-judges dormancy once a second; the inputs arrive over two sockets and
+    /// the answer also depends on how long it's been quiet.
+    func startClock() {
+        clock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.settle() }
+        }
+    }
+
+    func settle() {
+        let now = Date()
+        if busy { lastBusy = now }
+        let fold = !busy && !hovering && !pinned && now.timeIntervalSince(lastBusy) > Self.foldAfter
+        if fold != dormant { dormant = fold }
+    }
 
     var unseenApprovals: [ApprovalRequest] { approvals.filter { !snoozed.contains($0.id) } }
 
@@ -109,6 +152,7 @@ final class AgentState: ObservableObject {
     }
 
     func apply(_ message: [String: Any]) {
+        defer { settle() }
         guard let type = message["type"] as? String else { return }
         switch type {
         case "state":

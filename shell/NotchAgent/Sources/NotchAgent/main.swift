@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
 
         let geometry = NotchGeometry.current()
-        let frame = geometry.windowFrame(expandedWidth: 460, expandedHeight: 460)
+        let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
         let window = NotchWindow(
             contentRect: frame,
             rootView: NotchView(state: state, geometry: geometry)
@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.attach(client, fleet: agentsClient)
         agentsClient.connect()
 
+        state.startClock()
         installStatusItem()
         installHotKey()
 

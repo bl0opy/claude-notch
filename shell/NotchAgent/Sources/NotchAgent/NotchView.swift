@@ -1,56 +1,124 @@
 import SwiftUI
 
+/// The three shapes the notch takes, Dynamic Island style.
+enum IslandMode: Equatable {
+    /// Folded into the hardware notch — nothing going on.
+    case dormant
+    /// A live-activity pill: status on the left, Claw'd on the right.
+    case compact
+    /// The full panel.
+    case expanded
+}
+
 struct NotchView: View {
     @ObservedObject var state: AgentState
     let geometry: NotchGeometry
 
-    private var collapsedWidth: CGFloat { geometry.notchWidth + 112 }
+    @State private var leaving: Task<Void, Never>?
 
-    var body: some View {
-        VStack(spacing: 0) {
-            collapsed
-            if state.expanded {
-                expanded
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-        .animation(.spring(response: 0.32, dampingFraction: 0.82), value: state.expanded)
-        .animation(.easeOut(duration: 0.18), value: state.phase)
-        .animation(.easeOut(duration: 0.12), value: state.micOpen)
-        .animation(.easeOut(duration: 0.18), value: state.approvals)
-        .onHover { hovering in
-            state.hovering = hovering
+    private var mode: IslandMode {
+        if state.expanded { return .expanded }
+        return state.dormant ? .dormant : .compact
+    }
+
+    private var stripHeight: CGFloat { max(geometry.notchHeight, 26) }
+
+    private var width: CGFloat {
+        switch mode {
+        case .dormant: return geometry.notchWidth
+        case .compact: return geometry.notchWidth + (state.approvals.isEmpty ? 112 : 128)
+        case .expanded: return 480
         }
     }
 
-    private var collapsed: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                StatusDot(phase: state.phase, live: state.micOpen)
-                if !state.approvals.isEmpty {
-                    PendingBadge(count: state.approvals.count)
-                        .onTapGesture { state.snoozed = [] }
-                } else if !state.agents.isEmpty {
-                    RosterBadge(agents: state.agents)
-                        .onTapGesture { state.show(.agents) }
-                }
-            }
-            .frame(width: 56, alignment: .leading)
-            .padding(.leading, 14)
-            Spacer(minLength: geometry.notchWidth)
-            ClaudeMark(phase: state.phase)
-                .frame(width: 40, alignment: .trailing)
-                .padding(.trailing, 14)
+    private var shape: IslandShape {
+        switch mode {
+        case .dormant: return IslandShape(shoulder: 6, radius: 10)
+        case .compact: return IslandShape(shoulder: 8, radius: 14)
+        case .expanded: return IslandShape(shoulder: 12, radius: 28)
         }
-        .frame(width: collapsedWidth, height: max(geometry.notchHeight, 26))
-        .background(
-            NotchShape(cornerRadius: 12)
-                .fill(.black)
-        )
+    }
+
+    /// Opening overshoots a touch, like the island does; closing doesn't.
+    private var morph: Animation {
+        mode == .expanded
+            ? .spring(response: 0.42, dampingFraction: 0.74)
+            : .spring(response: 0.36, dampingFraction: 0.9)
+    }
+
+    var body: some View {
+        island
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var island: some View {
+        VStack(spacing: 0) {
+            strip
+            if mode == .expanded {
+                expanded
+                    .transition(.island)
+            }
+        }
+        .frame(width: width, alignment: .top)
+        .background(shape.fill(.black))
+        .clipShape(shape)
+        .contentShape(shape)
+        // A nudge when a new question lands, so the eye goes there.
+        .phaseAnimator([1.0, 1.05, 1.0], trigger: state.approvals.count) { view, scale in
+            view.scaleEffect(scale, anchor: .top)
+        } animation: { _ in .spring(response: 0.22, dampingFraction: 0.55) }
+        .onHover(perform: hover)
+        .animation(morph, value: mode)
+        .animation(.spring(response: 0.36, dampingFraction: 0.86), value: state.approvals.isEmpty)
+        .animation(.easeOut(duration: 0.18), value: state.phase)
+        .animation(.easeOut(duration: 0.12), value: state.micOpen)
+        .animation(.easeOut(duration: 0.18), value: state.approvals)
+    }
+
+    /// Opens straight away, closes after a beat — skimming past the edge
+    /// shouldn't slam it shut.
+    private func hover(_ inside: Bool) {
+        leaving?.cancel()
+        if inside {
+            state.hovering = true
+            return
+        }
+        leaving = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(280))
+            guard !Task.isCancelled else { return }
+            state.hovering = false
+        }
+    }
+
+    /// The row that sits beside the hardware notch in every mode but dormant.
+    private var strip: some View {
+        HStack(spacing: 0) {
+            if mode != .dormant {
+                HStack(spacing: 6) {
+                    StatusDot(phase: state.phase, live: state.micOpen)
+                    if !state.approvals.isEmpty {
+                        PendingBadge(count: state.approvals.count)
+                            .onTapGesture { state.snoozed = [] }
+                    } else if !state.agents.isEmpty {
+                        RosterBadge(agents: state.agents)
+                            .onTapGesture { state.show(.agents) }
+                    }
+                }
+                .padding(.leading, 14)
+                .transition(.island)
+            }
+            Spacer(minLength: geometry.notchWidth)
+            if mode != .dormant {
+                ClaudeMark(mood: state.mood, paused: state.dormant)
+                    .frame(width: 40, alignment: .trailing)
+                    .padding(.trailing, 14)
+                    .transition(.island)
+            }
+        }
+        .frame(height: stripHeight)
         // Click the notch to pin the panel open — hovering is fine for a glance,
         // useless for reading a dashboard while you work somewhere else.
+        .contentShape(Rectangle())
         .onTapGesture { state.pinned.toggle() }
     }
 
@@ -72,20 +140,12 @@ struct NotchView: View {
                     .lineLimit(2)
             }
             footer
-            Spacer(minLength: 0)
         }
-        .padding(16)
-        .frame(width: 460, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 18)
+        .frame(width: 480, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(white: 0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(Color(white: 0.18), lineWidth: 1)
-                )
-        )
-        .padding(.top, 6)
     }
 
     /// Two modes, not one stacked view: the agent you're talking to, or all of them.
@@ -716,25 +776,69 @@ private struct StatusDot: View {
     }
 }
 
-/// The rounded-underside shape that makes the panel read as an extension of the notch.
-struct NotchShape: Shape {
-    let cornerRadius: CGFloat
+/// The notch, grown: square along the top edge of the screen, flaring out into
+/// it with concave shoulders, and rounded along the bottom. Both radii animate,
+/// so one shape morphs between the folded, compact and expanded modes.
+struct IslandShape: Shape {
+    /// How far the top corners flare outward, past the frame.
+    var shoulder: CGFloat
+    var radius: CGFloat
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(shoulder, radius) }
+        set { (shoulder, radius) = (newValue.first, newValue.second) }
+    }
 
     func path(in rect: CGRect) -> Path {
+        let r = min(radius, rect.height / 2, rect.width / 2)
+        let s = shoulder
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - cornerRadius))
+        path.move(to: CGPoint(x: rect.minX - s, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX + s, y: rect.minY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + cornerRadius, y: rect.maxY),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
+            to: CGPoint(x: rect.maxX, y: rect.minY + s),
+            control: CGPoint(x: rect.maxX, y: rect.minY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX - cornerRadius, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - r))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.maxY - cornerRadius),
+            to: CGPoint(x: rect.maxX - r, y: rect.maxY),
             control: CGPoint(x: rect.maxX, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - r),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + s))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX - s, y: rect.minY),
+            control: CGPoint(x: rect.minX, y: rect.minY)
+        )
         path.closeSubpath()
         return path
+    }
+}
+
+/// Content arriving in the island blurs in and settles down from the top edge;
+/// leaving, it blurs out fast so the shape can close around it.
+private struct IslandContent: ViewModifier {
+    let hidden: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .blur(radius: hidden ? 8 : 0)
+            .scaleEffect(hidden ? 0.92 : 1, anchor: .top)
+            .opacity(hidden ? 0 : 1)
+    }
+}
+
+extension AnyTransition {
+    static var island: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(active: IslandContent(hidden: true), identity: IslandContent(hidden: false))
+                .animation(.spring(response: 0.4, dampingFraction: 0.86).delay(0.07)),
+            removal: .modifier(active: IslandContent(hidden: true), identity: IslandContent(hidden: false))
+                .animation(.easeIn(duration: 0.12))
+        )
     }
 }

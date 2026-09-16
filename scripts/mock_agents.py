@@ -1,5 +1,10 @@
 """Fake agents daemon on :8767 — builds the roster and approvals UI without live sessions."""
-import asyncio, json, random, time, websockets
+import asyncio, json, os, random, time, websockets
+
+# MOCK_SCENE: "demo" (default) keeps questions up; "cycle" walks through
+# questions -> working -> all idle, to watch the island expand, shrink and fold.
+SCENE = os.getenv("MOCK_SCENE", "demo")
+START = time.time()
 
 ROWS = [
     {"id": "a1", "pid": 101, "tty": "", "host": "", "name": "voice-agent-83", "project": "voice-agent",
@@ -48,8 +53,21 @@ def approvals():
     return {"type": "approvals", "list": APPROVALS}
 
 
+def cycle_phase():
+    t = (time.time() - START) % 40
+    return "questions" if t < 10 else "working" if t < 22 else "idle"
+
+
 def snapshot(tick):
     rows = [dict(r) for r in ROWS]
+    if SCENE == "cycle":
+        phase = cycle_phase()
+        for r in rows:
+            r["state"] = {"questions": r["state"], "working": "working", "idle": "idle"}[phase]
+            if phase != "questions" and r["state"] == "waiting":
+                r["state"] = "working"
+        return {"type": "agents", "ts": tick, "degraded": False, "reason": "",
+                "cliVersion": "2.1.251-mock", "list": rows}
     rows[0]["tokens"] = dict(rows[0]["tokens"], out=rows[0]["tokens"]["out"] + tick * 37)
     if tick % 8 == 0:
         rows[3]["state"] = random.choice(["working", "waiting", "idle"])
@@ -67,12 +85,15 @@ async def listen(ws):
 
 
 async def handler(ws):
-    print("client connected")
+    print("client connected", flush=True)
     listener = asyncio.create_task(listen(ws))
     await ws.send(json.dumps(approvals()))
     tick = 0
     try:
         while True:
+            if SCENE == "cycle":
+                shown = approvals() if cycle_phase() == "questions" else {"type": "approvals", "list": []}
+                await ws.send(json.dumps(shown))
             await ws.send(json.dumps(snapshot(tick)))
             tick += 1
             await asyncio.sleep(1)
