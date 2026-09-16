@@ -119,7 +119,7 @@ async def run():
     stages = [transport.input()]
     if ptt:
         stages.append(ptt)
-        logger.info("push-to-talk on — hold the command key to talk")
+        logger.info("push-to-talk on — hold the PTT key (right ⌥ by default) to talk")
     elif config.mic_gate:
         stages.append(MicGate(config.mic_gate_tail_ms))
         logger.info(f"mic gate on ({config.mic_gate_tail_ms} ms tail) — voice barge-in disabled")

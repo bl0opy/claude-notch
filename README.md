@@ -24,7 +24,7 @@ with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
 ## Run
 
 ```bash
-./run.sh                       # backend + shell
+./run.sh                       # agents daemon + backend + shell
 .venv/bin/python -m backend.main   # backend only
 ```
 
