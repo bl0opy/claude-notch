@@ -18,6 +18,7 @@ from backend.claude_code import ClaudeCodeSession
 from backend.mic_gate import MicGate
 from backend.ptt import PushToTalkGate
 from backend.config import ROOT, config
+from backend.fleet import Fleet
 from backend.processor import ClaudeCodeProcessor
 from backend.speech import SPEECH_SYSTEM_PROMPT
 
@@ -104,6 +105,7 @@ async def run():
     stt = build_stt()
     tts = build_tts()
     director = AgentDirector(session)
+    fleet = Fleet(config.agents_url)
 
     def announce_owned(ids: list[str]):
         asyncio.create_task(bridge.send({"type": "owned", "ids": ids}))
@@ -113,7 +115,7 @@ async def run():
         director,
         bridge,
         config.cancel_on_interrupt,
-        None,
+        fleet,
         config.spoken_sentences,
         hold_to_talk=config.push_to_talk,
         hold_tail_ms=config.ptt_tail_ms,
@@ -143,7 +145,12 @@ async def run():
         ),
     )
 
-    async def on_interrupt(_msg):
+    async def on_interrupt(msg):
+        agent_id = (msg.get("id") or "").strip()
+        # A row's stop button names its agent; that needn't be the one talking.
+        if agent_id and agent_id != director.focused:
+            await director.interrupt_agent(agent_id)
+            return
         await task.queue_frame(InterruptionFrame())
 
     async def on_text(msg):
@@ -166,9 +173,7 @@ async def run():
         session_id = (msg.get("id") or "").strip()
         if not session_id:
             return
-        director.focus(session_id)
-        await bridge.send({"type": "focus", "id": session_id})
-        await bridge.send({"type": "owned", "ids": director.owned_ids()})
+        await brain.focus(session_id)
 
     async def on_start_agent(msg):
         cwd = (msg.get("cwd") or "").strip()
@@ -207,10 +212,15 @@ async def run():
     bridge.on("say", on_say)
     bridge.on("hello", on_hello)
 
+    fleet.on_new_approval = brain.on_new_approval
+    fleet.on_event = brain.on_fleet_event
+    await fleet.start()
+
     runner = PipelineRunner(handle_sigint=True)
     try:
         await runner.run(task)
     finally:
+        await fleet.stop()
         await bridge.stop()
         await session.stop()
     return 0

@@ -2,8 +2,8 @@
 
 The notch drives sessions it started and can also talk to sessions it didn't:
 those it reaches over the peer socket and reads back from their transcript. Only
-the focused agent is ever heard — everything else reports in silently, except a
-one-line interjection when it blocks on you or finishes.
+the focused agent is ever heard. What the rest are waiting on, or have finished,
+comes from the agents daemon instead (backend/fleet.py).
 """
 import asyncio
 from dataclasses import dataclass
@@ -50,7 +50,6 @@ class AgentDirector:
         self._watcher: asyncio.Task | None = None
         self._tail: TranscriptTail | None = None
         self._tail_task: asyncio.Task | None = None
-        self._states: dict[str, str] = {}
         self.focused: str | None = None
 
     # ---- lifecycle -------------------------------------------------------
@@ -188,6 +187,27 @@ class AgentDirector:
         await session.interrupt()
         return True
 
+    async def interrupt_agent(self, agent_id: str) -> bool:
+        """Cut off one agent by id, focused or not — again, only one we started."""
+        holder = self._holder(agent_id) or next(
+            (o for o in self._owned.values() if o.session.proc and self._pid_of(agent_id) == o.session.proc.pid),
+            None,
+        )
+        if not holder:
+            return False
+        await holder.session.interrupt()
+        return True
+
+    def _pid_of(self, session_id: str) -> int:
+        row = self._live(session_id)
+        return row.pid if row else 0
+
+    @property
+    def home_id(self) -> str:
+        """The voice agent's own session — where "go back" returns the mic."""
+        holder = next((o for o in self._owned.values() if o.session is self._primary), None)
+        return holder.id if holder else ""
+
     # ---- watching everyone else -----------------------------------------
 
     def _live(self, session_id: str) -> LiveSession | None:
@@ -221,23 +241,6 @@ class AgentDirector:
                     await self._events.put(
                         (receipt.session_id, {"kind": "delivery", **receipt.as_dict()})
                     )
-                for row in rows:
-                    self._note(row)
-                self._states = {r.session_id: r.state for r in rows}
             except Exception as e:
                 logger.warning(f"agent watch tick failed: {e}")
             await asyncio.sleep(self._watch_interval)
-
-    def _note(self, row: LiveSession):
-        """One short interjection when a background agent blocks or finishes."""
-        was = self._states.get(row.session_id)
-        if was is None or was == row.state or row.session_id == self.focused:
-            return
-        name = row.name or row.cwd.rsplit("/", 1)[-1]
-        if row.state == "waiting":
-            self._alert(row.session_id, f"{name} needs your ok.")
-        elif was == "working" and row.state == "idle":
-            self._alert(row.session_id, f"{name} is done.")
-
-    def _alert(self, session_id: str, text: str):
-        self._events.put_nowait((session_id, {"kind": "alert", "text": text}))

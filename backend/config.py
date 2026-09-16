@@ -64,6 +64,8 @@ class Config:
         default_factory=lambda: os.getenv("CLAUDE_MODEL", "claude-sonnet-5")
     )
     permission_mode: str = field(default_factory=lambda: os.getenv("CLAUDE_PERMISSION_MODE", "auto"))
+    # The agents daemon: roster, approvals, and when an agent finishes.
+    agents_url: str = field(default_factory=lambda: os.getenv("AGENTS_URL", "ws://127.0.0.1:8767"))
     approval_timeout_s: float = field(
         default_factory=lambda: float(os.getenv("APPROVAL_TIMEOUT_S", "180"))
     )

@@ -1,6 +1,5 @@
 import asyncio
 import os
-import re
 
 from loguru import logger
 from pipecat.frames.frames import (
@@ -17,35 +16,17 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from backend.bridge import NotchBridge
 from backend.agents import AgentDirector
+from backend.bridge import NotchBridge
+from backend.commands import Command, parse, spoken_list
+from backend.fleet import Fleet
 from backend.speech import SpeechFilter
 from backend.tools import _TOOL_NARRATION, _tool_detail
 
-_YES = {"yes","yeah","yep","yup","sure","ok","okay","go","go ahead","do it","approve",
-        "approved","allow","fine","please do","affirmative","sounds good","confirm"}
-_NO = {"no","nope","nah","stop","don't","dont","cancel","deny","denied","reject","abort",
-       "negative","skip","never mind","nevermind"}
-
-
-def hears_approval(text: str) -> bool | None:
-    """yes/no from a spoken reply, or None if it isn't an answer either way."""
-    words = re.findall(r"[a-z']+", text.lower())
-    if not words:
-        return None
-    phrase = " ".join(words)
-    # Check the leading words first — "no, wait" is a no even though it's long.
-    for n in (3, 2, 1):
-        head = " ".join(words[:n])
-        if head in _NO:
-            return False
-        if head in _YES:
-            return True
-    if any(w in _NO for w in words) and not any(w in _YES for w in words):
-        return False
-    if any(w in _YES for w in words) and not any(w in _NO for w in words):
-        return True
-    return None
+# Questions and finishes that land together are said together.
+_ALERT_COALESCE_S = 2.0
+# Past this, an alert still stuck behind you talking isn't news any more.
+_ALERT_STALE_S = 45.0
 
 
 class ClaudeCodeProcessor(FrameProcessor):
@@ -61,7 +42,7 @@ class ClaudeCodeProcessor(FrameProcessor):
         director: AgentDirector,
         bridge: NotchBridge,
         cancel_on_interrupt: bool,
-        approvals=None,
+        fleet: Fleet | None = None,
         max_spoken_sentences: int = 2,
         hold_to_talk: bool = False,
         hold_tail_ms: int = 400,
@@ -69,7 +50,10 @@ class ClaudeCodeProcessor(FrameProcessor):
         super().__init__()
         self._director = director
         self._bridge = bridge
-        self._approvals = approvals
+        self._fleet = fleet
+        # (kind, text, approval id) waiting for a quiet moment to be said.
+        self._alerts: list[tuple[str, str, str]] = []
+        self._alert_task: asyncio.Task | None = None
         self._cancel_on_interrupt = cancel_on_interrupt
         self._filter = SpeechFilter(max_spoken_sentences)
         self._consumer: asyncio.Task | None = None
@@ -175,7 +159,7 @@ class ClaudeCodeProcessor(FrameProcessor):
             await self._take_turn(text)
 
     async def _take_turn(self, text: str):
-        if await self._answered_approval(text):
+        if await self._ran_command(text):
             return
         await self._bridge.send(
             {"type": "transcript", "role": "user", "text": text, "final": True}
@@ -200,53 +184,100 @@ class ClaudeCodeProcessor(FrameProcessor):
             logger.error(f"failed to send turn to claude code: {e}")
             await self._bridge.send({"type": "error", "message": str(e)})
 
-    async def _answered_approval(self, text: str) -> bool:
-        """Consume a spoken yes/no while the focused agent has a question open."""
-        if not self._approvals or not self._approvals.pending_for(self._director.focused):
+    # ---- the fleet -------------------------------------------------------
+
+    async def _ran_command(self, text: str) -> bool:
+        """Approvals, focus and status by voice. False when it's a turn for the agent."""
+        if not self._fleet:
             return False
-        verdict = hears_approval(text)
-        if verdict is None:
+        command = parse(text, self._fleet.approvals, self._fleet.agents)
+        if not command:
             return False
-        await self._bridge.send(
-            {"type": "transcript", "role": "user", "text": text, "final": True}
-        )
-        await self.resolve_approval(verdict, "by voice")
+        await self._bridge.send({"type": "transcript", "role": "user", "text": text, "final": True})
+        await self._speak_now(await self._run(command))
         return True
 
-    async def resolve_approval(self, approved: bool, how: str = ""):
-        if not self._approvals:
-            return
-        # An answer is always for the agent you're talking to, never whichever
-        # question happened to arrive last.
-        req_id = self._approvals.pending_for(self._director.focused) or self._approvals.pending_id
-        if not req_id or not self._approvals.resolve(req_id, approved, how):
-            return
-        await self._bridge.send({"type": "approval_closed", "id": req_id, "approved": approved})
-        await self._bridge.state("thinking")
+    async def _run(self, command: Command) -> str:
+        if command.kind == "answer":
+            request = self._fleet.approval(command.id) or {}
+            if not await self._fleet.answer(command.id, command.approved, command.always):
+                return "I can't reach the agents daemon."
+            who = request.get("project") or "it"
+            if not command.approved:
+                return f"Denied {who}."
+            return f"Always allowing that for {who}." if command.always else f"Allowed {who}."
+        if command.kind in ("say", "status"):
+            return command.text
+        if command.kind == "focus":
+            await self.focus(command.id)
+            return f"You're on {command.text}."
+        if command.kind == "home":
+            if not self._director.home_id:
+                return "I'm not running."
+            await self.focus(self._director.home_id)
+            return "Back with me."
+        if command.kind == "stop":
+            if await self._director.interrupt_agent(command.id):
+                return f"Stopped {command.text}."
+            return f"{command.text} is running in a terminal — I can't stop it from here."
+        return ""
 
-    async def ask_approval(self, request: dict):
-        """A hook is blocked on us; put the question in the notch and say it."""
-        asked_by = request.get("session_id", "")
-        await self._bridge.send(
-            {
-                "type": "approval",
-                "id": request["id"],
-                "tool": request.get("tool", "tool"),
-                "reason": request.get("reason", ""),
-                "summary": request.get("summary", ""),
-                "agent": asked_by,
-            }
-        )
-        # A question from an agent you aren't talking to gets a nudge, not the
-        # whole question — answering it means focusing it first.
-        if asked_by and asked_by != self._director.focused:
-            where = os.path.basename(self._director.cwd_of(asked_by)) or "another agent"
-            await self._speak_now(f"{where} needs your ok.")
+    async def focus(self, session_id: str):
+        self._director.focus(session_id)
+        await self._bridge.send({"type": "focus", "id": session_id})
+        await self._bridge.send({"type": "owned", "ids": self._director.owned_ids()})
+
+    async def on_new_approval(self, request: dict):
+        project = request.get("project") or "An agent"
+        self._alert("ask", f"{project} wants to {request.get('summary') or 'do something'}.", request["id"])
+
+    async def on_fleet_event(self, event: dict):
+        # A long turn finishing somewhere you aren't looking is news; the one
+        # you're talking to, or a quick one, isn't.
+        if event.get("event") != "done" or not event.get("long"):
             return
-        await self._bridge.state("waiting")
-        # Out loud it's only ever the summary — the command itself is on screen.
-        summary = request.get("summary") or "this one"
-        await self._speak_now(f"I need your approval for {summary}.")
+        if event.get("sessionId") == self._director.focused:
+            return
+        self._alert("done", event.get("project") or "An agent", "")
+
+    def _alert(self, kind: str, text: str, approval_id: str):
+        self._alerts.append((kind, text, approval_id))
+        if not self._alert_task:
+            self._alert_task = asyncio.create_task(self._say_alerts())
+
+    async def _say_alerts(self):
+        try:
+            await asyncio.sleep(_ALERT_COALESCE_S)
+            waited = 0.0
+            # Never over you, and never over an answer being read out.
+            while self._mic_open or self._drain or self._responding or self._bridge.last_state == "speaking":
+                await asyncio.sleep(0.5)
+                waited += 0.5
+                if waited > _ALERT_STALE_S:
+                    self._alerts = []
+                    return
+            alerts, self._alerts = self._alerts, []
+            line = self._alert_line(alerts)
+            if line:
+                await self._speak_now(line)
+        finally:
+            self._alert_task = None
+        if self._alerts:
+            self._alert_task = asyncio.create_task(self._say_alerts())
+
+    def _alert_line(self, alerts: list[tuple[str, str, str]]) -> str:
+        # A question already answered — in the notch, or its terminal — goes unsaid.
+        asks = [a for a in alerts if a[0] == "ask" and self._fleet and self._fleet.approval(a[2])]
+        done = list(dict.fromkeys(text for kind, text, _ in alerts if kind == "done"))
+        parts = []
+        if len(asks) == 1:
+            parts.append(asks[0][1])
+        elif asks:
+            names = list(dict.fromkeys((self._fleet.approval(a[2]) or {}).get("project") or "one" for a in asks))
+            parts.append(f"{spoken_list(names)} {'needs' if len(names) == 1 else 'need'} you.")
+        if done:
+            parts.append(f"{spoken_list(done[:3])} {'is' if len(done) == 1 else 'are'} done.")
+        return " ".join(parts)
 
     async def _speak_now(self, text: str):
         """Say something that isn't part of Claude's streamed answer."""
@@ -287,13 +318,6 @@ class ClaudeCodeProcessor(FrameProcessor):
             kind = event["kind"]
             # Everything reaches the notch; only the focused agent is spoken.
             focused = agent_id == self._director.focused
-
-            if kind == "alert":
-                # A background agent blocked or finished. One line, and never
-                # over the top of a permission question we're already asking.
-                if not (self._approvals and self._approvals.pending_id):
-                    await self._speak_now(event["text"])
-                continue
 
             if kind == "delivery":
                 await self._bridge.send({k: v for k, v in event.items() if k != "kind"})
