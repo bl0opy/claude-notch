@@ -19,6 +19,7 @@ struct NotchView: View {
         .animation(.spring(response: 0.32, dampingFraction: 0.82), value: state.expanded)
         .animation(.easeOut(duration: 0.18), value: state.phase)
         .animation(.easeOut(duration: 0.12), value: state.micOpen)
+        .animation(.easeOut(duration: 0.18), value: state.approvals)
         .onHover { hovering in
             state.hovering = hovering
         }
@@ -28,7 +29,10 @@ struct NotchView: View {
         HStack(spacing: 0) {
             HStack(spacing: 6) {
                 StatusDot(phase: state.phase, live: state.micOpen)
-                if !state.agents.isEmpty {
+                if !state.approvals.isEmpty {
+                    PendingBadge(count: state.approvals.count)
+                        .onTapGesture { state.snoozed = [] }
+                } else if !state.agents.isEmpty {
                     RosterBadge(agents: state.agents)
                         .onTapGesture { state.show(.agents) }
                 }
@@ -53,8 +57,8 @@ struct NotchView: View {
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            if let request = state.approval {
-                ApprovalCard(request: request) { state.answerApproval($0) }
+            if !state.approvals.isEmpty {
+                ApprovalStack(state: state)
             }
             if state.panel == .agents {
                 dashboard
@@ -113,7 +117,7 @@ struct NotchView: View {
             }
             if !state.assistantText.isEmpty {
                 FieldBlock(title: "claude", text: state.assistantText, color: Color(white: 0.72))
-                    .frame(maxHeight: 180)
+                    .frame(maxHeight: state.approvals.isEmpty ? 180 : 70)
             }
             if !state.tools.isEmpty || state.phase == .thinking {
                 ActivityFeed(tools: state.tools, working: state.phase == .thinking)
@@ -138,17 +142,20 @@ struct NotchView: View {
                             AgentRow(
                                 agent: agent,
                                 focused: agent.id == state.focused,
-                                owned: agent.owned || state.ownedIds.contains(agent.id)
-                            ) {
-                                state.focus(agent.id)
-                                state.panel = .focus
-                            }
+                                owned: agent.owned || state.ownedIds.contains(agent.id),
+                                focus: {
+                                    state.focus(agent.id)
+                                    state.panel = .focus
+                                },
+                                jump: { state.jump(to: agent) },
+                                stop: { state.stop(agent) }
+                            )
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .scrollIndicators(.never)
-                .frame(maxHeight: 232)
+                .frame(maxHeight: state.approvals.isEmpty ? 232 : 110)
             }
 
             HStack(spacing: 10) {
@@ -166,7 +173,7 @@ struct NotchView: View {
                         .foregroundStyle(AgentPhase.waiting.tint.opacity(0.8))
                 }
                 Spacer()
-                Text("click a row to hand it the mic")
+                Text("click a row for the mic · ↗ to its terminal")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(Color(white: 0.34))
             }
@@ -238,7 +245,7 @@ private struct EmptyRoster: View {
                 .foregroundStyle(Color(white: 0.7))
             Text(connected
                  ? (cwd.isEmpty ? "start one with + agent" : "start one with + agent, or talk to this one")
-                 : "start it: scripts/install-agentsd.sh — it serves :8767")
+                 : "start it: scripts/install-agentsd.sh — it serves :8767 and :8766")
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(Color(white: 0.36))
         }
@@ -256,6 +263,9 @@ private struct AgentRow: View {
     /// says it owns, which is the fresher of the two.
     let owned: Bool
     let focus: () -> Void
+    let jump: () -> Void
+    let stop: () -> Void
+    @State private var hovering = false
 
     var body: some View {
         Button(action: focus) {
@@ -289,6 +299,16 @@ private struct AgentRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer(minLength: 6)
+                if hovering {
+                    HStack(spacing: 4) {
+                        if owned && agent.state == .working {
+                            RowAction(symbol: "■", help: "stop", action: stop)
+                        }
+                        if agent.canJump {
+                            RowAction(symbol: "↗", help: "show its terminal", action: jump)
+                        }
+                    }
+                }
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(compactTokens(agent.tokensOut))
                         .foregroundStyle(Color(white: 0.42))
@@ -305,10 +325,50 @@ private struct AgentRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(focused ? Color(white: 0.14) : .clear)
+                    .fill(focused ? Color(white: 0.14) : hovering ? Color(white: 0.1) : .clear)
             )
         }
         .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+    }
+}
+
+private struct RowAction: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(symbol)
+                .font(.system(size: 10, weight: .semibold))
+                .frame(width: 20, height: 16)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.2)))
+                .foregroundStyle(Color(white: 0.85))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+/// Collapsed, questions outrank everything: an amber count that breathes.
+private struct PendingBadge: View {
+    let count: Int
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Circle()
+                .fill(AgentPhase.waiting.tint)
+                .frame(width: 5, height: 5)
+                .opacity(pulse ? 0.35 : 1)
+            Text("\(count)")
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(AgentPhase.waiting.tint)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { pulse = true }
+        }
     }
 }
 
@@ -333,32 +393,113 @@ private struct RosterBadge: View {
     }
 }
 
-/// The permission question, with the two buttons. Saying "yeah" or "nope" does
-/// the same thing — this is here for when talking isn't convenient.
-private struct ApprovalCard: View {
-    let request: ApprovalRequest
-    let answer: (Bool) -> Void
+/// Every open permission question on the machine. The oldest gets the full card
+/// and the keys; the rest wait underneath as one-liners you can clear in place.
+private struct ApprovalStack: View {
+    @ObservedObject var state: AgentState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Text("needs your ok")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(AgentPhase.waiting.tint)
-                .textCase(.uppercase)
-
-            Text(request.reason.isEmpty ? request.tool : request.reason)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Color(white: 0.86))
-                .lineLimit(3)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 8) {
-                answerButton("approve", tint: Color(red: 0.36, green: 0.85, blue: 0.55)) { answer(true) }
-                answerButton("deny", tint: Color(white: 0.55)) { answer(false) }
-                Spacer()
-                Text("or just say yeah / nope")
+        VStack(alignment: .leading, spacing: 6) {
+            if let top = state.topApproval {
+                ApprovalCard(
+                    request: top,
+                    waiting: state.approvals.count - 1,
+                    canJump: state.agent(for: top)?.canJump ?? false,
+                    answer: { approved, always in state.answer(top, approved: approved, always: always) },
+                    jump: { state.jump(to: top) },
+                    hide: { state.snoozeApprovals() }
+                )
+            }
+            ForEach(state.approvals.dropFirst().prefix(3)) { request in
+                ApprovalLine(
+                    request: request,
+                    canJump: state.agent(for: request)?.canJump ?? false,
+                    answer: { state.answer(request, approved: $0) },
+                    jump: { state.jump(to: request) }
+                )
+            }
+            if state.approvals.count > 4 {
+                Text("+\(state.approvals.count - 4) more")
                     .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.38))
+                    .foregroundStyle(Color(white: 0.4))
+                    .padding(.leading, 11)
+            }
+        }
+    }
+}
+
+/// 8s · 3m · 2h — how long it's been sitting there.
+private func age(since: Date, now: Date) -> String {
+    let seconds = max(0, Int(now.timeIntervalSince(since)))
+    switch seconds {
+    case ..<60: return "\(seconds)s"
+    case ..<3600: return "\(seconds / 60)m"
+    default: return "\(seconds / 3600)h"
+    }
+}
+
+private let allowTint = Color(red: 0.36, green: 0.85, blue: 0.55)
+private let riskTint = Color(red: 1.0, green: 0.42, blue: 0.38)
+
+private struct ApprovalCard: View {
+    let request: ApprovalRequest
+    let waiting: Int
+    let canJump: Bool
+    let answer: (_ approved: Bool, _ always: Bool) -> Void
+    let jump: () -> Void
+    let hide: () -> Void
+
+    private var accent: Color { request.risky ? riskTint : AgentPhase.waiting.tint }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text(request.title)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                if request.source == "terminal" {
+                    Text("also in its terminal")
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.36))
+                }
+                Spacer()
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(age(since: request.created, now: context.date))
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.38))
+                        .monospacedDigit()
+                }
+                Button(action: hide) {
+                    Text("hide")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.45))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(request.detail.isEmpty ? request.summary : request.detail)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(Color(white: 0.88))
+                .lineLimit(3)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+
+            HStack(spacing: 6) {
+                pill("allow", tint: allowTint) { answer(true, false) }
+                if request.canAlways {
+                    pill("always", tint: allowTint.opacity(0.75)) { answer(true, true) }
+                }
+                pill("deny", tint: Color(white: 0.6)) { answer(false, false) }
+                if canJump {
+                    pill("↗", tint: Color(white: 0.6), action: jump)
+                }
+                Spacer()
+                Text(hint)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(request.risky ? riskTint.opacity(0.8) : Color(white: 0.38))
+                    .lineLimit(1)
             }
         }
         .padding(11)
@@ -367,17 +508,66 @@ private struct ApprovalCard: View {
                 .fill(Color(white: 0.11))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(AgentPhase.waiting.tint.opacity(0.45), lineWidth: 1)
+                        .stroke(accent.opacity(0.5), lineWidth: 1)
                 )
         )
     }
 
-    private func answerButton(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private var hint: String {
+        let name = request.project.isEmpty ? "it" : request.project
+        let voice = request.risky ? "say \"approve \(name)\"" : "say yes · ⌃⌥Y"
+        return waiting > 0 ? "\(voice) · \(waiting) more" : voice
+    }
+
+    private func pill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 12).padding(.vertical, 5)
-                .background(Capsule().fill(tint.opacity(0.22)))
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Capsule().fill(tint.opacity(0.2)))
+                .foregroundStyle(tint)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// A question behind the top one: enough to recognise it and clear it.
+private struct ApprovalLine: View {
+    let request: ApprovalRequest
+    let canJump: Bool
+    let answer: (Bool) -> Void
+    let jump: () -> Void
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Circle()
+                .fill(request.risky ? riskTint : AgentPhase.waiting.tint)
+                .frame(width: 5, height: 5)
+            Text(request.project.isEmpty ? request.tool : request.project)
+                .foregroundStyle(Color(white: 0.8))
+                .lineLimit(1)
+            Text(request.detail.isEmpty ? request.summary : request.detail)
+                .foregroundStyle(Color(white: 0.46))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            mini("✓", tint: allowTint) { answer(true) }
+            mini("✕", tint: Color(white: 0.6)) { answer(false) }
+            if canJump {
+                mini("↗", tint: Color(white: 0.6), action: jump)
+            }
+        }
+        .font(.system(size: 10, design: .monospaced))
+        .padding(.horizontal, 11)
+        .padding(.vertical, 3)
+    }
+
+    private func mini(_ symbol: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(symbol)
+                .font(.system(size: 10, weight: .bold))
+                .frame(width: 20, height: 16)
+                .background(RoundedRectangle(cornerRadius: 4).fill(tint.opacity(0.18)))
                 .foregroundStyle(tint)
         }
         .buttonStyle(.plain)

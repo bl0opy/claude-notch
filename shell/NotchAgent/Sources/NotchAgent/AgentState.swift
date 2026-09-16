@@ -28,13 +28,6 @@ enum AgentPhase: String {
     }
 }
 
-/// A tool call parked on the user's answer, mirrored from the PreToolUse hook.
-struct ApprovalRequest: Identifiable {
-    let id: String
-    let tool: String
-    let reason: String
-}
-
 struct ToolEvent: Identifiable {
     enum Status { case running, done, failed }
 
@@ -59,7 +52,11 @@ final class AgentState: ObservableObject {
     @Published var tools: [ToolEvent] = []
     @Published var sessionCwd: String = ""
     @Published var lastError: String = ""
-    @Published var approval: ApprovalRequest?
+    /// Every session's open permission question, oldest first.
+    @Published var approvals: [ApprovalRequest] = []
+    /// Questions you've waved away for now. The panel stops opening for them,
+    /// and opens again for the next new one.
+    @Published var snoozed: Set<String> = []
     @Published var hovering: Bool = false
     /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
@@ -80,8 +77,8 @@ final class AgentState: ObservableObject {
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
 
-    /// A foreign agent — one started in a terminal — can be talked to but not
-    /// interrupted, and its permission questions are answered where it runs.
+    /// A foreign agent — one started in a terminal — can be talked to and
+    /// approved, but not interrupted.
     var canInterrupt: Bool {
         guard let focused else { return true }
         if ownedIds.contains(focused) { return true }
@@ -91,12 +88,24 @@ final class AgentState: ObservableObject {
 
     /// The panel opens on hover, and on its own while Claude is working so the
     /// activity feed is visible without having to park the cursor up there.
-    var expanded: Bool { hovering || pinned || micOpen || phase == .thinking || approval != nil }
+    var expanded: Bool { hovering || pinned || micOpen || phase == .thinking || !unseenApprovals.isEmpty }
+
+    var unseenApprovals: [ApprovalRequest] { approvals.filter { !snoozed.contains($0.id) } }
+
+    /// The one ⌃⌥Y / ⌃⌥N / ⌃⌥J act on.
+    var topApproval: ApprovalRequest? { approvals.first }
 
     private var client: BridgeClient?
+    /// The agents daemon holds the approvals, so answers go there, not to the voice backend.
+    private var fleet: BridgeClient?
 
-    func attach(_ client: BridgeClient) {
+    func attach(_ client: BridgeClient, fleet: BridgeClient) {
         self.client = client
+        self.fleet = fleet
+    }
+
+    func agent(for request: ApprovalRequest) -> RemoteAgent? {
+        agents.first { $0.id == request.sessionId } ?? agents.first { $0.pid == request.pid && request.pid > 0 }
     }
 
     func apply(_ message: [String: Any]) {
@@ -120,14 +129,9 @@ final class AgentState: ObservableObject {
             assistantText += message["text"] as? String ?? ""
         case "assistant_done":
             if let text = message["text"] as? String, !text.isEmpty { assistantText = text }
-        case "approval":
-            approval = ApprovalRequest(
-                id: message["id"] as? String ?? "",
-                tool: message["tool"] as? String ?? "tool",
-                reason: message["reason"] as? String ?? ""
-            )
-        case "approval_closed":
-            approval = nil
+        case "approvals":
+            approvals = (message["list"] as? [[String: Any]] ?? []).compactMap(ApprovalRequest.init)
+            snoozed.formIntersection(approvals.map(\.id))
         case "tool":
             let event = ToolEvent(
                 id: message["id"] as? String ?? UUID().uuidString,
@@ -171,6 +175,7 @@ final class AgentState: ObservableObject {
     /// The agents daemon dropped: empty the roster rather than show a frozen one.
     func clearRoster() {
         agents = []
+        approvals = []
         rosterDegraded = false
         rosterConnected = false
     }
@@ -188,9 +193,27 @@ final class AgentState: ObservableObject {
         micOpen = down
         client?.send(["type": "ptt", "down": down])
     }
-    func answerApproval(_ approved: Bool) {
-        client?.send(["type": "approve", "approved": approved])
-        approval = nil
+    func answer(_ request: ApprovalRequest, approved: Bool, always: Bool = false) {
+        fleet?.send(["type": "approve", "id": request.id, "approved": approved, "always": always, "how": "from the notch"])
+        // The daemon's next snapshot confirms it; don't leave the card up meanwhile.
+        approvals.removeAll { $0.id == request.id }
+    }
+
+    func snoozeApprovals() {
+        snoozed.formUnion(approvals.map(\.id))
+    }
+
+    func jump(to request: ApprovalRequest) {
+        if let agent = agent(for: request) { jump(to: agent) }
+    }
+
+    func jump(to agent: RemoteAgent) {
+        Jump.to(host: agent.host, tty: agent.tty)
+    }
+
+    /// Cut one agent off mid-turn — only the notch's own can be.
+    func stop(_ agent: RemoteAgent) {
+        client?.send(["type": "interrupt", "id": agent.id])
     }
     func send(text: String) { client?.send(["type": "text", "text": text]) }
 }

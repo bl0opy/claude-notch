@@ -1,20 +1,20 @@
-"""Fake agents daemon on :8767 — builds the roster UI without live sessions."""
-import asyncio, json, random, websockets
+"""Fake agents daemon on :8767 — builds the roster and approvals UI without live sessions."""
+import asyncio, json, random, time, websockets
 
 ROWS = [
-    {"id": "a1", "pid": 101, "name": "voice-agent-83", "project": "voice-agent",
+    {"id": "a1", "pid": 101, "tty": "", "host": "", "name": "voice-agent-83", "project": "voice-agent",
      "cwd": "/Users/ayan/Documents/GitHub/voice-agent", "branch": "notch-agent-dashboard",
      "state": "working", "waitingFor": "", "reachable": True, "owned": True,
      "model": "claude-opus-5", "activity": "Grep", "activityDetail": "NotchBridge",
      "subagents": {"total": 2, "active": 1},
      "tokens": {"in": 578, "out": 164927, "cache_read": 19466890, "cache_write": 1093205, "thinking": 46112}},
-    {"id": "b2", "pid": 102, "name": "descant-ide-4", "project": "descant-ide",
+    {"id": "b2", "pid": 102, "tty": "ttys003", "host": "Terminal", "name": "descant-ide-4", "project": "descant-ide",
      "cwd": "/Users/ayan/Documents/GitHub/descant-ide", "branch": "fix-auth-flow",
      "state": "waiting", "waitingFor": "input needed", "reachable": True, "owned": False,
      "model": "claude-sonnet-5", "activity": "Bash", "activityDetail": "pytest -q",
      "subagents": {"total": 0, "active": 0},
      "tokens": {"in": 12, "out": 4210, "cache_read": 220145, "cache_write": 9821, "thinking": 640}},
-    {"id": "c3", "pid": 103, "name": "wound-stage-1", "project": "wound-stage",
+    {"id": "c3", "pid": 103, "tty": "", "host": "Code", "name": "wound-stage-1", "project": "wound-stage",
      "cwd": "/Users/ayan/Documents/GitHub/wound-stage", "branch": "main",
      "state": "idle", "waitingFor": "", "reachable": False, "owned": False,
      "model": "claude-sonnet-5", "activity": "Read", "activityDetail": "train.py",
@@ -29,6 +29,25 @@ ROWS = [
 ]
 
 
+NOW = int(time.time() * 1000)
+APPROVALS = [
+    {"id": "q1", "source": "terminal", "sessionId": "b2", "pid": 102, "project": "descant-ide",
+     "cwd": "/tmp", "tool": "Bash", "detail": "git push origin fix-auth-flow", "summary": "push to git",
+     "risky": True, "canAlways": False, "created": NOW - 94_000},
+    {"id": "q2", "source": "terminal", "sessionId": "d4", "pid": 104,
+     "project": "multiplayer-piano-with-a-very-long-name", "cwd": "/tmp", "tool": "Bash",
+     "detail": "npm test -- --runInBand --coverage src/server/websocket/reconnect.test.ts",
+     "summary": "run npm", "risky": False, "canAlways": True, "created": NOW - 20_000},
+    {"id": "q3", "source": "owned", "sessionId": "a1", "pid": 101, "project": "voice-agent", "cwd": "/tmp",
+     "tool": "WebFetch", "detail": "https://code.claude.com/docs/en/hooks.md", "summary": "fetch code.claude.com",
+     "risky": False, "canAlways": False, "created": NOW - 3_000},
+]
+
+
+def approvals():
+    return {"type": "approvals", "list": APPROVALS}
+
+
 def snapshot(tick):
     rows = [dict(r) for r in ROWS]
     rows[0]["tokens"] = dict(rows[0]["tokens"], out=rows[0]["tokens"]["out"] + tick * 37)
@@ -38,13 +57,27 @@ def snapshot(tick):
             "cliVersion": "2.1.251-mock", "list": rows}
 
 
+async def listen(ws):
+    async for raw in ws:
+        msg = json.loads(raw)
+        print("got", msg)
+        if msg.get("type") == "approve":
+            APPROVALS[:] = [a for a in APPROVALS if a["id"] != msg.get("id")]
+            await ws.send(json.dumps(approvals()))
+
+
 async def handler(ws):
     print("client connected")
+    listener = asyncio.create_task(listen(ws))
+    await ws.send(json.dumps(approvals()))
     tick = 0
-    while True:
-        await ws.send(json.dumps(snapshot(tick)))
-        tick += 1
-        await asyncio.sleep(1)
+    try:
+        while True:
+            await ws.send(json.dumps(snapshot(tick)))
+            tick += 1
+            await asyncio.sleep(1)
+    finally:
+        listener.cancel()
 
 
 async def main():

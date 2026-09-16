@@ -38,6 +38,10 @@ struct RemoteAgent: Identifiable, Equatable {
     let owned: Bool
     /// Has a messaging socket, so it can be talked to at all.
     let reachable: Bool
+    let pid: Int
+    /// Where it runs: "ttys003" in "Terminal". Blank when the daemon couldn't tell.
+    let tty: String
+    let host: String
 
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, !id.isEmpty else { return nil }
@@ -51,9 +55,14 @@ struct RemoteAgent: Identifiable, Equatable {
         activityDetail = raw["activityDetail"] as? String ?? ""
         owned = raw["owned"] as? Bool ?? false
         reachable = raw["reachable"] as? Bool ?? false
+        pid = raw["pid"] as? Int ?? 0
+        tty = raw["tty"] as? String ?? ""
+        host = raw["host"] as? String ?? ""
         subagents = (raw["subagents"] as? [String: Any])?["total"] as? Int ?? 0
         tokensOut = (raw["tokens"] as? [String: Any])?["out"] as? Int ?? 0
     }
+
+    var canJump: Bool { Jump.canJump(host: host) }
 
     /// Where it is: `voice-agent/main`.
     var title: String { branch.isEmpty ? project : "\(project)/\(branch)" }

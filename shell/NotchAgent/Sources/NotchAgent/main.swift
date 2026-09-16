@@ -36,7 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.phase = .disconnected
             }
         }
-        state.attach(client)
         client.connect()
 
         // The agents daemon is a separate process on its own port, so the roster
@@ -51,6 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.state.clearRoster()
             }
         }
+        state.attach(client, fleet: agentsClient)
         agentsClient.connect()
 
         installStatusItem()
@@ -75,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(
             withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
         ).target = self
+        menu.addItem(withTitle: "Allow / deny oldest (⌃⌥Y / ⌃⌥N)", action: nil, keyEquivalent: "").isEnabled = false
+        menu.addItem(withTitle: "Show its terminal (⌃⌥J)", action: nil, keyEquivalent: "").isEnabled = false
         menu.addItem(.separator())
         menu.addItem(
             withTitle: "Agents dashboard", action: #selector(showAgents), keyEquivalent: ""
@@ -88,11 +90,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = item
     }
 
-    /// Option-Space anywhere = shut it up. Needs Accessibility permission.
+    /// Keys that work from any app. Needs Accessibility permission.
+    ///
+    /// - ⌥Space: shut it up.
+    /// - ⌃⌥Y / ⌃⌥N: allow or deny the oldest open question.
+    /// - ⌃⌥J: show the terminal it came from.
+    ///
+    /// Global monitors can't swallow a key, so the approval keys use ⌃⌥ — nothing
+    /// a terminal or an editor does anything with.
     private func installHotKey() {
         hotKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.modifierFlags.contains(.option), event.keyCode == 49 else { return }
-            Task { @MainActor in self?.state.interrupt() }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            let code = event.keyCode
+            Task { @MainActor in self?.handleHotKey(flags: flags, code: code) }
+        }
+    }
+
+    private func handleHotKey(flags: NSEvent.ModifierFlags, code: UInt16) {
+        if flags.contains(.option), !flags.contains(.control), code == 49 {
+            state.interrupt()
+            return
+        }
+        guard flags.contains([.control, .option]), let top = state.topApproval else { return }
+        switch code {
+        case 16: state.answer(top, approved: true)    // Y
+        case 45: state.answer(top, approved: false)   // N
+        case 38: state.jump(to: top)                  // J
+        default: break
         }
     }
 
