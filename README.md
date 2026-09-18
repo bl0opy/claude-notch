@@ -21,6 +21,36 @@ cp .env.example .env      # fill in DEEPGRAM_API_KEY
 `claude` must be on PATH and already logged in. It runs on Sonnet 5 — override
 with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
 
+### Speech recognition, on-device
+
+`STT_BACKEND=local` transcribes on the machine with
+[parakeet-mlx](https://github.com/senstella/parakeet-mlx) instead of Deepgram —
+Apple Silicon only, `pip install parakeet-mlx`, and the model downloads itself on
+first run.
+
+Push-to-talk is what makes this work. Flux earns its keep by deciding *when* a
+turn ended from the audio; with hold-to-talk the key already says so, so the
+local model only has to transcribe a bounded buffer on release. Measured on an
+M1 Max with `parakeet-tdt-0.6b-v3`, after a 1.6 s load at startup:
+
+| audio | key-up to text |
+|---|---|
+| 0.7 s — "what's waiting" | 57 ms |
+| 2.4 s — a short sentence | 78 ms |
+| 3.4 s — a long one | 86 ms |
+
+It mishears names it has never seen — "descant" comes back as "desk and" — which
+matters because the spoken commands are addressed by project. `backend/vocab.py`
+puts them back, matching runs of words against the repos that currently have
+sessions; the threshold is set from measured pairs rather than by feel, so
+"the agent" is left alone but "bus trucker" becomes `bus-tracker`. Cloud models
+take a keyword list for this; parakeet has no biasing hook.
+
+Deepgram is still the default and still the better transcriber. TTS has no local
+path yet, so the key is still needed to hear anything back.
+
+    .venv/bin/python scripts/stt_smoke.py   # synthesises speech, no mic needed
+
 ## Run
 
 ```bash
@@ -177,6 +207,8 @@ roster keeps working rather than the daemon crashing.
 | `backend/claude_code.py` | Long-lived `claude -p` subprocess, stream-json in/out |
 | `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
 | `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
+| `backend/stt.py` | On-device speech recognition, segmented by the PTT key |
+| `backend/vocab.py` | Puts back project names a local model mishears |
 | `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
 | `backend/agents.py` | Who has focus; routes a spoken turn to the right agent |
 | `backend/commands.py` | Spoken fleet commands — approve, deny, status, go to, stop |
@@ -197,6 +229,8 @@ roster keeps working rather than the daemon crashing.
 | `scripts/inbox_smoke.py` | Proves the inbox with the real hook: concurrency, fallbacks, cleanup |
 | `scripts/commands_smoke.py` | Table test for the spoken command grammar |
 | `scripts/fleet_smoke.py` | Voice answering questions end to end, speech captured |
+| `scripts/stt_smoke.py` | Local STT: 48 kHz in, corrected text out, timed |
+| `scripts/tail_smoke.py` | Proves a foreign agent's answer is what gets spoken |
 
 ## WebSocket protocol
 
@@ -249,7 +283,8 @@ call, one line back — `{"decision": "allow|deny|none", "reason": "...", "permi
 
 ## Config
 
-All via `.env`: `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`, `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
+All via `.env`: `STT_BACKEND`, `PARAKEET_MODEL`, `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`,
+`EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
 `AGENTS_URL`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
 `WS_HOST`, `WS_PORT`. The agents daemon reads `AGENTS_WS_PORT` (8767),

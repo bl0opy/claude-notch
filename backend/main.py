@@ -7,7 +7,6 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.frame_processor import FrameDirection
-from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 
@@ -21,9 +20,27 @@ from backend.config import ROOT, config
 from backend.fleet import Fleet
 from backend.processor import ClaudeCodeProcessor
 from backend.speech import SPEECH_SYSTEM_PROMPT
+from backend.vocab import Vocabulary
 
 
-def build_stt() -> DeepgramFluxSTTService:
+def build_stt():
+    if config.local_stt:
+        from backend.stt import ParakeetSTTService
+
+        if not config.push_to_talk:
+            # Nothing else would ever close a segment; the key is the only
+            # end-of-turn signal on this path.
+            logger.warning("local stt needs push-to-talk — turning it back on")
+        logger.info(f"stt: local ({config.parakeet_model})")
+        return ParakeetSTTService(
+            model=config.parakeet_model,
+            vocabulary=Vocabulary(),
+            sample_rate=config.audio_sample_rate,
+        )
+
+    from pipecat.services.deepgram.flux.stt import DeepgramFluxSTTService
+
+    logger.info(f"stt: deepgram ({config.deepgram_model})")
     return DeepgramFluxSTTService(
         api_key=config.deepgram_api_key,
         should_interrupt=True,
@@ -48,6 +65,8 @@ async def run():
     if missing:
         logger.error(f"missing env vars: {', '.join(missing)} — copy .env.example to .env")
         return 1
+
+    push_to_talk = config.push_to_talk or config.local_stt
 
     bridge = NotchBridge(config.ws_host, config.ws_port)
     await bridge.start()
@@ -117,11 +136,11 @@ async def run():
         config.cancel_on_interrupt,
         fleet,
         config.spoken_sentences,
-        hold_to_talk=config.push_to_talk,
+        hold_to_talk=push_to_talk,
         hold_tail_ms=config.ptt_tail_ms,
     )
 
-    ptt = PushToTalkGate() if config.push_to_talk else None
+    ptt = PushToTalkGate(announce_speech=config.local_stt) if push_to_talk else None
 
     stages = [transport.input()]
     if ptt:

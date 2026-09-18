@@ -10,6 +10,15 @@ load_dotenv(ROOT / ".env")
 
 @dataclass
 class Config:
+    # "deepgram" is the better transcriber; "local" needs no key at all, which
+    # is what makes the app installable by someone who hasn't signed up for
+    # anything. Only viable because push-to-talk already marks the turn's end.
+    stt_backend: str = field(default_factory=lambda: os.getenv("STT_BACKEND", "deepgram").lower())
+    parakeet_model: str = field(
+        default_factory=lambda: os.getenv(
+            "PARAKEET_MODEL", "mlx-community/parakeet-tdt-0.6b-v3"
+        )
+    )
     deepgram_api_key: str = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY", ""))
     deepgram_model: str = field(default_factory=lambda: os.getenv("DEEPGRAM_MODEL", "flux-general-en"))
     deepgram_voice: str = field(
@@ -73,7 +82,12 @@ class Config:
         default_factory=lambda: os.getenv("CANCEL_ON_INTERRUPT", "1") == "1"
     )
 
+    @property
+    def local_stt(self) -> bool:
+        return self.stt_backend in ("local", "parakeet")
+
     def missing_keys(self) -> list[str]:
+        # TTS still needs the key; only STT can run without one so far.
         return [] if self.deepgram_api_key else ["DEEPGRAM_API_KEY"]
 
 
