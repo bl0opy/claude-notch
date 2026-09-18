@@ -219,11 +219,18 @@ class AgentDirector:
             await asyncio.sleep(0.5)
             if not self._tail:
                 return
-            said, ended = await asyncio.to_thread(self._tail.poll)
-            for text in said:
-                await self._events.put((session_id, {"kind": "text_delta", "text": text}))
-            if ended:
-                await self._events.put((session_id, {"kind": "turn_end"}))
+            poll = await asyncio.to_thread(self._tail.poll)
+            for text in poll.said:
+                # Shown as it arrives, but not spoken: mid-turn text is the
+                # agent narrating its own work, and speaking it spends the
+                # turn's two-sentence budget before the answer exists.
+                await self._events.put(
+                    (session_id, {"kind": "text_delta", "text": text, "speak": False})
+                )
+            if poll.ended:
+                await self._events.put(
+                    (session_id, {"kind": "turn_end", "text": poll.answer})
+                )
 
     async def _watch(self):
         while True:

@@ -349,6 +349,10 @@ class ClaudeCodeProcessor(FrameProcessor):
                 if not focused:
                     continue
                 self._raw += event["text"]
+                # A foreign agent's deltas are display-only; its answer is
+                # spoken whole at turn end instead (backend/agents.py).
+                if event.get("speak") is False:
+                    continue
                 for chunk in self._filter.feed(event["text"]):
                     await self._speak(chunk)
 
@@ -384,6 +388,10 @@ class ClaudeCodeProcessor(FrameProcessor):
                 self._dropping = False
                 if self._pending_turns > 0:
                     continue
+                answer = (event.get("text") or "").strip()
+                if answer:
+                    for chunk in self._filter.feed(answer):
+                        await self._speak(chunk)
                 for chunk in self._filter.flush():
                     await self._speak(chunk)
                 if self._responding:
