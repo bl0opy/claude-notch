@@ -7,16 +7,18 @@ Claude Code does the actual work underneath.
 SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
   state / transcript / tools                        parakeet, on-device (STT)
   hold right ⌥ to talk                              claude -p (stream-json)
-  stop button, ⌥Space                               Deepgram Aura-2 (TTS)
+  stop button, ⌥Space                               kokoro, on-device (TTS)
 ```
 
 ## Setup
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc]" websockets python-dotenv parakeet-mlx
-cp .env.example .env      # fill in DEEPGRAM_API_KEY
+.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
 ```
+
+That's all it needs. Speech both ways runs on the machine, so there's no API key
+and nothing billed beyond your own Claude plan. A is optional, for the cloud voice or transcriber (`cp .env.example .env`).
 
 `claude` must be on PATH and already logged in. It runs on Sonnet 5 — override
 with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
@@ -47,10 +49,33 @@ sessions; the threshold is set from measured pairs rather than by feel, so
 "the agent" is left alone but "bus trucker" becomes `bus-tracker`. Cloud models
 take a keyword list for this; parakeet has no biasing hook.
 
-Deepgram is still the better transcriber. TTS has no local path yet, so the key
-is still needed to hear anything back.
+Deepgram is still the better transcriber.
 
     .venv/bin/python scripts/stt_smoke.py   # synthesises speech, no mic needed
+
+### Speech out, on-device
+
+Replies are spoken by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
+through kokoro-onnx, which pipecat already wraps. The ~350 MB model downloads
+on first run. `KOKORO_VOICE` picks the voice (`af_heart` by default).
+`TTS_BACKEND=deepgram` switches back to Aura-2, and without kokoro-onnx
+installed it falls back on its own.
+
+It renders a whole sentence before any of it plays, so what you wait for is
+the first sentence of a reply. Later sentences render while earlier ones play,
+about 4x faster than realtime. Measured on an M1 Max:
+
+| sentence | first audio |
+|---|---|
+| "Done." | 269 ms |
+| "Orbit wants to push to git." | 432 ms |
+| "The notch should reconnect on its own within a few seconds." | 709 ms |
+
+Aura-2 starts a little sooner and sounds a little better. CoreML makes no
+difference, and the MLX build of Kokoro needs espeak data it couldn't find,
+so the ONNX one is the default.
+
+    .venv/bin/python scripts/tts_smoke.py [out.wav]   # write it out to listen
 
 ## Run
 
@@ -240,6 +265,7 @@ roster keeps working rather than the daemon crashing.
 | `scripts/commands_smoke.py` | Table test for the spoken command grammar |
 | `scripts/fleet_smoke.py` | Voice answering questions end to end, speech captured |
 | `scripts/stt_smoke.py` | Local STT: 48 kHz in, corrected text out, timed |
+| `scripts/tts_smoke.py` | Local TTS: time to first audio per sentence, no key |
 | `scripts/tail_smoke.py` | Proves a foreign agent's answer is what gets spoken |
 
 ## WebSocket protocol
@@ -293,7 +319,8 @@ call, one line back — `{"decision": "allow|deny|none", "reason": "...", "permi
 
 ## Config
 
-All via `.env`: `STT_BACKEND`, `PARAKEET_MODEL`, `DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`,
+All via `.env`: `STT_BACKEND`, `PARAKEET_MODEL`, `TTS_BACKEND`, `KOKORO_VOICE`,
+`DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`,
 `EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
 `CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
 `AGENTS_URL`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
@@ -342,11 +369,11 @@ agent's own voice, fire an interrupt, and set Claude Code answering itself in a
 loop. The cost is that voice barge-in stops working; Option-Space and the stop
 button still interrupt. Set `MIC_GATE=0` on headphones to get barge-in back.
 
-`TTS_SAMPLE_RATE` (default 24000) is the one deliberate exception: aura-2 is a
-24 kHz model, so 24 -> 48 kHz has to happen somewhere. Measured on one utterance,
+`TTS_SAMPLE_RATE` (default 24000) is the one deliberate exception: Kokoro and
+aura-2 are both 24 kHz models, so 24 -> 48 kHz has to happen somewhere. Measured on one utterance,
 asking Deepgram for 48 kHz leaves 0.17% of total energy above 12 kHz — imaging
 junk above the model's own Nyquist, which is what reads as harsh. Rendering
 native and resampling locally through pipecat's soxr VHQ leaves 0.00000% up
 there, so that is the default.
 
-STT and TTS share one Deepgram key — no second vendor.
+With the Deepgram backends, STT and TTS share one key — no second vendor.

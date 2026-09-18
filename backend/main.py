@@ -23,21 +23,28 @@ from backend.speech import SPEECH_SYSTEM_PROMPT
 from backend.vocab import Vocabulary
 
 
-def _local_stt_available() -> bool:
+def _installed(module: str) -> bool:
     try:
-        import parakeet_mlx  # noqa: F401
+        __import__(module)
     except ImportError:
         return False
     return True
 
 
-def build_stt():
-    # Local is the default, so a machine without parakeet (not Apple Silicon,
-    # or not installed yet) falls back to Deepgram rather than failing to start.
-    if config.local_stt and not _local_stt_available():
+def resolve_backends():
+    """Local is the default for both halves. A machine that can't run one —
+    parakeet is Apple Silicon only, and either may simply not be installed yet —
+    falls back to Deepgram for that half rather than failing to start. Done
+    before the key check, since falling back is what makes a key necessary."""
+    if config.local_stt and not _installed("parakeet_mlx"):
         logger.warning("parakeet-mlx isn't installed — using deepgram for stt")
         config.stt_backend = "deepgram"
+    if config.local_tts and not _installed("kokoro_onnx"):
+        logger.warning('kokoro-onnx isn\'t installed (pip install "pipecat-ai[kokoro]") — using deepgram for tts')
+        config.tts_backend = "deepgram"
 
+
+def build_stt():
     if config.local_stt:
         from backend.stt import ParakeetSTTService
 
@@ -66,7 +73,19 @@ def build_stt():
     )
 
 
-def build_tts() -> DeepgramTTSService:
+def build_tts():
+    # Both render at 24 kHz; the step up to the pipeline's 48 kHz happens once,
+    # in pipecat's soxr resampler, whichever one is speaking.
+    if config.local_tts:
+        from pipecat.services.kokoro.tts import KokoroTTSService
+
+        logger.info(f"tts: local kokoro ({config.kokoro_voice}) — first run downloads ~350 MB")
+        return KokoroTTSService(
+            sample_rate=config.tts_sample_rate,
+            settings=KokoroTTSService.Settings(voice=config.kokoro_voice),
+        )
+
+    logger.info(f"tts: deepgram ({config.deepgram_voice})")
     return DeepgramTTSService(
         api_key=config.deepgram_api_key,
         sample_rate=config.tts_sample_rate,
@@ -75,6 +94,7 @@ def build_tts() -> DeepgramTTSService:
 
 
 async def run():
+    resolve_backends()
     missing = config.missing_keys()
     if missing:
         logger.error(f"missing env vars: {', '.join(missing)} — copy .env.example to .env")

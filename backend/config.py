@@ -20,6 +20,12 @@ class Config:
             "PARAKEET_MODEL", "mlx-community/parakeet-tdt-0.6b-v3"
         )
     )
+    # Kokoro-82M through kokoro-onnx: renders a sentence 4x faster than it
+    # plays, so the first sentence of a reply starts in 0.3-0.9 s and each next
+    # one is ready before the last has finished. "deepgram" starts sooner and
+    # sounds a little better, and needs the key.
+    tts_backend: str = field(default_factory=lambda: os.getenv("TTS_BACKEND", "kokoro").lower())
+    kokoro_voice: str = field(default_factory=lambda: os.getenv("KOKORO_VOICE", "af_heart"))
     deepgram_api_key: str = field(default_factory=lambda: os.getenv("DEEPGRAM_API_KEY", ""))
     deepgram_model: str = field(default_factory=lambda: os.getenv("DEEPGRAM_MODEL", "flux-general-en"))
     deepgram_voice: str = field(
@@ -87,9 +93,14 @@ class Config:
     def local_stt(self) -> bool:
         return self.stt_backend in ("local", "parakeet")
 
+    @property
+    def local_tts(self) -> bool:
+        return self.tts_backend in ("local", "kokoro")
+
     def missing_keys(self) -> list[str]:
-        # TTS still needs the key; only STT can run without one so far.
-        return [] if self.deepgram_api_key else ["DEEPGRAM_API_KEY"]
+        # Only a Deepgram half needs a key; fully local needs nothing.
+        needs_key = not self.local_stt or not self.local_tts
+        return ["DEEPGRAM_API_KEY"] if needs_key and not self.deepgram_api_key else []
 
 
 config = Config()
