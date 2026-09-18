@@ -18,7 +18,8 @@ pyenv local 3.11.6 && python -m venv .venv
 ```
 
 That's all it needs. Speech both ways runs on the machine, so there's no API key
-and nothing billed beyond your own Claude plan. A is optional, for the cloud voice or transcriber (`cp .env.example .env`).
+and nothing billed beyond your own Claude plan. A Deepgram key is optional, for
+the cloud voice or transcriber (`cp .env.example .env`).
 
 `claude` must be on PATH and already logged in. It runs on Sonnet 5 — override
 with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
