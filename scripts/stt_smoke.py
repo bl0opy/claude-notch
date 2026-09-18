@@ -63,7 +63,12 @@ async def main():
     # there's no pipeline, so say what rate the audio arrives at.
     stt._sample_rate = RATE
     t = time.perf_counter()
-    await asyncio.to_thread(stt._load)
+    await stt._on_mlx(stt._load)
+    # The app keeps the default thread pool busy (the agent watcher, transcript
+    # reads), so transcription can't count on landing on the thread that loaded
+    # the model. Occupy it here so this test fails the way the app did if the
+    # service ever stops pinning MLX to its own thread.
+    await asyncio.gather(*(asyncio.to_thread(time.sleep, 0.05) for _ in range(16)))
     print(f"model load: {time.perf_counter() - t:.1f}s\n")
 
     failures = []

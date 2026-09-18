@@ -12,6 +12,7 @@ M1 Max, parakeet-tdt-0.6b-v3: 49 ms for a two-word command, 90 ms for a
 five-second sentence, against a 1.6 s one-time load at startup.
 """
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import AsyncGenerator
 
 import numpy as np
@@ -34,6 +35,11 @@ class ParakeetSTTService(SegmentedSTTService):
         self._model = None
         self._resampler = SOXRAudioResampler()
         self._vocabulary = vocabulary
+        # MLX streams belong to the thread that created them: a model loaded on
+        # one thread fails on any other with "There is no Stream(cpu, 1) in
+        # current thread". asyncio.to_thread hands out whichever pool worker is
+        # free, so everything MLX touches runs on this one thread instead.
+        self._mlx = ThreadPoolExecutor(max_workers=1, thread_name_prefix="parakeet")
 
     @property
     def wants_wav_segments(self) -> bool:
@@ -46,7 +52,10 @@ class ParakeetSTTService(SegmentedSTTService):
     async def start(self, frame):
         await super().start(frame)
         # ~1.6 s off the main thread, so the notch comes up while it loads.
-        await asyncio.to_thread(self._load)
+        await self._on_mlx(self._load)
+
+    async def _on_mlx(self, fn, *args):
+        return await asyncio.get_running_loop().run_in_executor(self._mlx, fn, *args)
 
     def _load(self):
         from parakeet_mlx import from_pretrained
@@ -62,7 +71,7 @@ class ParakeetSTTService(SegmentedSTTService):
         pcm = await self._resampler.resample(audio, self.sample_rate, MODEL_RATE)
         await self.start_ttfb_metrics()
         try:
-            text = await asyncio.to_thread(self._transcribe_pcm, pcm)
+            text = await self._on_mlx(self._transcribe_pcm, pcm)
         except Exception as e:
             logger.error(f"local stt failed: {e}")
             yield ErrorFrame(f"local stt failed: {e}")
