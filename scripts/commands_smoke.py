@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.commands import parse  # noqa: E402
+from backend.commands import parse, usage_line  # noqa: E402
 
 AGENTS = [
     {"id": "s-bus", "project": "bus-tracker", "name": "bus-tracker-2", "state": "waiting"},
@@ -41,6 +41,27 @@ CASES = [
     ("go to the store and buy milk", [], None),
     ("go to orbit's config file", [], None),
     ("approve the refactor plan", [TEST], None),
+    ("what's this costing", [], ("status", "", False, False)),
+    ("how much have we spent", [], ("status", "", False, False)),
+    ("context usage", [], ("status", "", False, False)),
+    ("how much should i refactor this", [], None),
+]
+
+# Every session at once, said out loud.
+TOTALS = {
+    "sessions": 3,
+    "totalTokens": 20_595_665,
+    "cost": 18.37,
+    "context": {"fullestPct": 21.6, "fullest": "voice-agent", "crowded": 0},
+}
+USAGE_CASES = [
+    (TOTALS, ["3 sessions", "20.6 million", "18 dollars", "voice-agent", "22 percent"]),
+    ({**TOTALS, "context": {"fullestPct": 88.0, "fullest": "nudge", "crowded": 2}},
+     ["2 windows are past three quarters"]),
+    ({"sessions": 1, "totalTokens": 900, "cost": 0.0,
+      "context": {"fullestPct": 0.0, "fullest": "", "crowded": 0}},
+     ["1 session,", "900 tokens"]),
+    ({}, ["Nothing's running"]),
 ]
 
 
@@ -54,6 +75,14 @@ def main() -> int:
         print(f"{'ok  ' if ok else 'FAIL'} {text!r:42} -> {got}{'' if ok else f'  (wanted {expected})'}")
         if command and command.text and command.kind in ("say", "status"):
             print(f"       says: {command.text}")
+    for totals, wanted in USAGE_CASES:
+        line = usage_line(totals)
+        missing = [w for w in wanted if w not in line]
+        failed += bool(missing)
+        print(f"{'ok  ' if not missing else 'FAIL'} usage: {line}")
+        if missing:
+            print(f"       missing {missing}")
+
     print("all good" if not failed else f"{failed} failed")
     return 1 if failed else 0
 

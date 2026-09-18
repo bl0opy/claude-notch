@@ -7,6 +7,7 @@ Anything that isn't one of these goes to the focused agent as a normal turn.
     approve|deny <project>        that project's oldest question
     always allow <project>        and remember the rule, where Claude Code offered one
     what's waiting / status       one sentence about the fleet
+    what's this costing / usage   tokens, dollars and the fullest window
     go to|switch to <project>     hand that agent the mic
     back / home                   the voice agent's own session again
     stop <project>                interrupt it, if the notch started it
@@ -36,6 +37,11 @@ _HOME = {"back", "go back", "home", "go home", "back home", "back to home", "bac
 _STATUS = re.compile(
     r"^(?:status|fleet status|what'?s waiting|what is waiting|anything waiting|who needs me|"
     r"what needs me|what'?s everyone doing|what is everyone doing|what'?s going on|how are the agents)$"
+)
+_USAGE = re.compile(
+    r"^(?:usage|cost|costs|the cost|spend|what'?s (?:this|it|that) cost(?:ing)?|"
+    r"what is (?:this|it) costing|how much (?:is this|have (?:i|we) spent|does this cost)|"
+    r"how many tokens|token usage|context usage|how full (?:is|are) (?:it|the context|the windows?))$"
 )
 
 
@@ -119,7 +125,43 @@ def status_line(approvals: list[dict], agents: list[dict]) -> str:
     return line
 
 
-def parse(text: str, approvals: list[dict], agents: list[dict]) -> Command | None:
+def _tokens(n: int) -> str:
+    """Said out loud, so "twenty point six million", not "20,595,665"."""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f} million".replace(".0 ", " ")
+    if n >= 1_000:
+        return f"{round(n / 1_000)} thousand"
+    return str(n)
+
+
+def usage_line(totals: dict) -> str:
+    if not totals or not totals.get("sessions"):
+        return "Nothing's running."
+    count = totals["sessions"]
+    spend = totals.get("cost") or 0
+    # "about 0 dollars" is worse than saying nothing about the amount.
+    money = "under a dollar" if spend < 1 else f"about {spend:.0f} dollars"
+    line = (
+        f"{count} session{'s' if count != 1 else ''}, "
+        f"{_tokens(totals.get('totalTokens') or 0)} tokens, "
+        f"{money} at API rates."
+    )
+    context = totals.get("context") or {}
+    fullest, whose = context.get("fullestPct") or 0, context.get("fullest")
+    crowded = context.get("crowded") or 0
+    if crowded:
+        line += f" {crowded} {'window is' if crowded == 1 else 'windows are'} past three quarters."
+    elif whose:
+        line += f" Fullest window is {whose}, at {fullest:.0f} percent."
+    return line
+
+
+def parse(
+    text: str,
+    approvals: list[dict],
+    agents: list[dict],
+    totals: dict | None = None,
+) -> Command | None:
     words = _words(text)
     if not words:
         return None
@@ -127,6 +169,8 @@ def parse(text: str, approvals: list[dict], agents: list[dict]) -> Command | Non
 
     if _STATUS.match(phrase):
         return Command("status", text=status_line(approvals, agents))
+    if _USAGE.match(phrase):
+        return Command("status", text=usage_line(totals or {}))
     if phrase in _HOME:
         return Command("home")
 

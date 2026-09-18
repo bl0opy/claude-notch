@@ -6,6 +6,7 @@ from pathlib import Path
 from agentsd.config import config
 from agentsd.registry import LiveSession, live_sessions
 from agentsd.transcripts import Transcripts
+from agentsd.usage import Totals, fold_dict
 
 _toplevel: dict[str, str] = {}
 _hosts: dict[int, tuple[str, str]] = {}
@@ -90,6 +91,36 @@ def _row(session: LiveSession, transcripts: Transcripts, owned: set[str]) -> dic
     }
 
 
+def fleet_totals(rows: list[dict]) -> dict:
+    """The whole machine as one line: tokens, dollars, and window pressure.
+
+    Context doesn't sum into anything meaningful — five sessions don't share a
+    window — so what's reported is how full the fullest one is, and how many are
+    past three quarters. That's the number that predicts a compaction, which is
+    the thing worth seeing coming.
+    """
+    totals = Totals()
+    spend = 0.0
+    fullest, fullest_of = 0, None
+    crowded = 0
+    for row in rows:
+        fold_dict(row.get("tokens") or {}, totals)
+        spend += row.get("cost") or 0.0
+        context = row.get("context") or {}
+        pct = context.get("pct") or 0.0
+        if pct >= 75:
+            crowded += 1
+        if pct > fullest:
+            fullest, fullest_of = pct, row.get("project") or ""
+    return {
+        "sessions": len(rows),
+        "tokens": totals.as_dict(),
+        "totalTokens": totals.total,
+        "cost": round(spend, 4),
+        "context": {"fullestPct": fullest, "fullest": fullest_of, "crowded": crowded},
+    }
+
+
 def build(transcripts: Transcripts, owned: set[str] | None = None) -> dict:
     sessions, degraded = live_sessions()
     owned = owned or set()
@@ -101,5 +132,6 @@ def build(transcripts: Transcripts, owned: set[str] | None = None) -> dict:
         "degraded": bool(degraded),
         "reason": degraded,
         "cliVersion": version,
+        "fleet": fleet_totals(rows),
         "list": rows,
     }

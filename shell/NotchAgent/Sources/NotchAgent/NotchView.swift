@@ -218,6 +218,10 @@ struct NotchView: View {
                 .frame(maxHeight: state.approvals.isEmpty ? 232 : 110)
             }
 
+            if let totals = state.fleetTotals {
+                FleetLine(totals: totals)
+            }
+
             HStack(spacing: 10) {
                 Button(action: newAgent) {
                     Text("+ agent")
@@ -316,6 +320,46 @@ private struct EmptyRoster: View {
 
 /// One session: where it is, what it's doing, what it has spent, and whether
 /// the notch can do anything to it beyond watch.
+/// Every session at once: how many, how many tokens, what that would cost, and
+/// which window is closest to compacting.
+private struct FleetLine: View {
+    let totals: FleetTotals
+
+    var body: some View {
+        HStack(spacing: 8) {
+            cell("\(totals.sessions)", totals.sessions == 1 ? "agent" : "agents", Color(white: 0.45))
+            divider
+            cell(totals.tokenLabel, "tokens", Color(white: 0.45))
+            divider
+            cell(totals.costLabel, "at api rates", Color(white: 0.45))
+            divider
+            cell(
+                totals.crowded > 0 ? "\(totals.crowded) near full" : totals.contextLabel,
+                "context",
+                totals.pressureTint
+            )
+            Spacer()
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.12)))
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Color(white: 0.22)).frame(width: 1, height: 14)
+    }
+
+    private func cell(_ value: String, _ label: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(value)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(tint == Color(white: 0.45) ? Color(white: 0.82) : tint)
+            Text(label)
+                .font(.system(size: 8, design: .monospaced))
+                .foregroundStyle(Color(white: 0.38))
+        }
+    }
+}
+
 private struct AgentRow: View {
     let agent: RemoteAgent
     let focused: Bool

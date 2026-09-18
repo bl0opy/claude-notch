@@ -66,6 +66,7 @@ final class AgentState: ObservableObject {
     /// The one that hears the mic and speaks. nil = the voice agent's own session.
     @Published var focused: String?
     @Published var rosterDegraded: Bool = false
+    @Published var fleetTotals: FleetTotals? = nil
     /// Sessions the voice backend started, which is what makes them interruptible.
     @Published var ownedIds: Set<String> = []
     /// Which half of the panel is showing.
@@ -195,6 +196,7 @@ final class AgentState: ObservableObject {
                 ($0.state.rank, $0.project) < ($1.state.rank, $1.project)
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
+            fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
         case "focus":
             focused = message["id"] as? String
         case "owned":
@@ -222,6 +224,7 @@ final class AgentState: ObservableObject {
         approvals = []
         rosterDegraded = false
         rosterConnected = false
+        fleetTotals = nil
     }
 
     func show(_ mode: PanelMode) {

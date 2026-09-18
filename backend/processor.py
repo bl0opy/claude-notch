@@ -190,7 +190,7 @@ class ClaudeCodeProcessor(FrameProcessor):
         """Approvals, focus and status by voice. False when it's a turn for the agent."""
         if not self._fleet:
             return False
-        command = parse(text, self._fleet.approvals, self._fleet.agents)
+        command = parse(text, self._fleet.approvals, self._fleet.agents, self._fleet.totals)
         if not command:
             return False
         await self._bridge.send({"type": "transcript", "role": "user", "text": text, "final": True})

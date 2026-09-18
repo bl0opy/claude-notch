@@ -115,6 +115,13 @@ interjection when it asks for something or finishes a long turn. Hover a row for
 started). The dashboard is also on the menu bar item, and the count beside the
 status dot opens it.
 
+Above the roster, one line for the whole machine: how many sessions, how many
+tokens they've spent between them, what that would cost at API rates, and which
+window is closest to full. Windows don't add up — five sessions don't share one —
+so what's shown is the fullest, turning amber once anything is past three
+quarters, which is the thing that predicts a compaction. A subscription isn't
+billed per token, so the dollars are a size for comparing sessions, not a bill.
+
 **+ agent** on the dashboard (or *New agent…* in the menu) picks a repo and
 starts an agent there, owned by the notch — which is what makes it steerable and
 interruptible. The status dot count and the roster
@@ -178,6 +185,7 @@ so they're instant:
 | "approve orbit", "deny bus tracker" | answers that project's question |
 | "always allow orbit" | allow and keep the rule Claude Code suggested |
 | "what's waiting" | one sentence: who's asking what, who's working |
+| "what's this costing", "context usage" | the whole fleet: tokens, dollars, fullest window |
 | "go to descant", "back" | hand an agent the mic, or return it to the voice agent |
 | "stop orbit" | interrupt it, if the notch started it |
 
@@ -216,6 +224,7 @@ roster keeps working rather than the daemon crashing.
 | `agentsd/` | Watches every session, serves the roster, talks to foreign ones |
 | `agentsd/inbox.py` | Every open permission question, held until it's answered somewhere |
 | `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
+| `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
 | `backend/bridge.py` | WebSocket server the notch shell talks to |
 | `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |

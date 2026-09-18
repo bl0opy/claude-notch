@@ -80,6 +80,48 @@ struct RemoteAgent: Identifiable, Equatable {
     }
 }
 
+/// Every session on the machine as one line.
+struct FleetTotals: Equatable {
+    let sessions: Int
+    let tokens: Int
+    /// What those tokens would cost at API rates. A subscription isn't billed
+    /// per token, so this is a size to compare sessions by, not a bill.
+    let cost: Double
+    /// Windows don't add up — five sessions don't share one — so the fullest is
+    /// what's reported, plus how many are close enough to compact soon.
+    let fullestPct: Double
+    let fullest: String
+    let crowded: Int
+
+    init?(_ raw: [String: Any]?) {
+        guard let raw, let sessions = raw["sessions"] as? Int, sessions > 0 else { return nil }
+        self.sessions = sessions
+        tokens = raw["totalTokens"] as? Int ?? 0
+        cost = raw["cost"] as? Double ?? 0
+        let context = raw["context"] as? [String: Any] ?? [:]
+        fullestPct = context["fullestPct"] as? Double ?? 0
+        fullest = context["fullest"] as? String ?? ""
+        crowded = context["crowded"] as? Int ?? 0
+    }
+
+    var tokenLabel: String { compactTokens(tokens) }
+
+    var costLabel: String {
+        cost >= 10 ? String(format: "$%.0f", cost) : String(format: "$%.2f", cost)
+    }
+
+    /// Amber once something is close to compacting.
+    var pressureTint: Color {
+        if crowded > 0 || fullestPct >= 75 { return AgentPhase.waiting.tint }
+        return Color(white: 0.45)
+    }
+
+    var contextLabel: String {
+        if fullest.isEmpty { return "—" }
+        return String(format: "%@ %.0f%%", fullest, fullestPct)
+    }
+}
+
 /// 812 · 4.2k · 1.4M — narrow and stable so the column doesn't jitter.
 func compactTokens(_ value: Int) -> String {
     switch value {

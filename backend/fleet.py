@@ -18,6 +18,7 @@ class Fleet:
         self.url = url
         self.agents: list[dict] = []
         self.approvals: list[dict] = []
+        self.totals: dict = {}
         self.connected = False
         self._ws = None
         self._task: asyncio.Task | None = None
@@ -61,7 +62,7 @@ class Fleet:
                     logger.warning(f"fleet: lost the agents daemon ({e})")
             finally:
                 self._ws, self.connected = None, False
-                self.agents, self.approvals = [], []
+                self.agents, self.approvals, self.totals = [], [], {}
             await asyncio.sleep(delay)
             delay = min(delay * 2, 5.0)
 
@@ -69,6 +70,7 @@ class Fleet:
         kind = msg.get("type")
         if kind == "agents":
             self.agents = msg.get("list") or []
+            self.totals = msg.get("fleet") or {}
         elif kind == "approvals":
             self.approvals = msg.get("list") or []
             # Ids are never reused, so remembering only the open ones is enough —

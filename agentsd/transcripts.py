@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agentsd import paths
-from agentsd.usage import Totals, fold
+from agentsd.usage import Totals, cost, fold, occupancy, window_for
 from backend.tools import _tool_detail
 
 
@@ -24,6 +24,15 @@ class Rollup:
     activity_detail: str = ""
     subagents_total: int = 0
     subagents_active: int = 0
+    # How full this session's window is right now, from its last request.
+    context: int = 0
+    # Priced as it is accumulated: a subagent can be on a different model from
+    # its parent, so the parent's rate can't be applied to the folded total.
+    cost: float = 0.0
+
+    @property
+    def window(self) -> int:
+        return window_for(self.model)
 
     def as_dict(self) -> dict:
         return {
@@ -33,6 +42,12 @@ class Rollup:
             "activityDetail": self.activity_detail,
             "subagents": {"total": self.subagents_total, "active": self.subagents_active},
             "tokens": self.totals.as_dict(),
+            "context": {
+                "used": self.context,
+                "window": self.window,
+                "pct": round(100 * self.context / self.window, 1) if self.window else 0.0,
+            },
+            "cost": round(self.cost, 4),
         }
 
 
@@ -43,6 +58,7 @@ class _Parsed:
     branch: str = ""
     activity: str = ""
     activity_detail: str = ""
+    context: int = 0
 
 
 def _parse(path: Path) -> _Parsed:
@@ -68,7 +84,11 @@ def _parse(path: Path) -> _Parsed:
                 continue
 
             message = row.get("message") or {}
-            fold(message.get("usage") or {}, out.totals)
+            usage = message.get("usage") or {}
+            fold(usage, out.totals)
+            # Last one wins: the newest request is the conversation's size now.
+            if usage:
+                out.context = occupancy(usage)
             if message.get("model"):
                 out.model = message["model"]
 
@@ -108,6 +128,9 @@ class Transcripts:
             result.branch = main.branch
             result.activity = main.activity
             result.activity_detail = main.activity_detail
+            # Subagents have windows of their own, so this stays the main one's.
+            result.context = main.context
+            result.cost = cost(main.totals, main.model)
 
         for path in paths.subagent_files(cwd, session_id):
             parsed = self._parsed(path)
@@ -120,6 +143,7 @@ class Transcripts:
             except OSError:
                 pass
             fold_totals(result.totals, parsed.totals)
+            result.cost += cost(parsed.totals, parsed.model or result.model)
         return result
 
     def forget(self, keep: set[Path]):
