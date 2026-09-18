@@ -10,10 +10,11 @@ load_dotenv(ROOT / ".env")
 
 @dataclass
 class Config:
-    # "deepgram" is the better transcriber; "local" needs no key at all, which
-    # is what makes the app installable by someone who hasn't signed up for
-    # anything. Only viable because push-to-talk already marks the turn's end.
-    stt_backend: str = field(default_factory=lambda: os.getenv("STT_BACKEND", "deepgram").lower())
+    # "local" needs no key at all, which is what makes the app installable by
+    # someone who hasn't signed up for anything; "deepgram" is the better
+    # transcriber. Local is only viable because push-to-talk already marks the
+    # turn's end.
+    stt_backend: str = field(default_factory=lambda: os.getenv("STT_BACKEND", "local").lower())
     parakeet_model: str = field(
         default_factory=lambda: os.getenv(
             "PARAKEET_MODEL", "mlx-community/parakeet-tdt-0.6b-v3"

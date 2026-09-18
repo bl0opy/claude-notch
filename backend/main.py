@@ -23,7 +23,21 @@ from backend.speech import SPEECH_SYSTEM_PROMPT
 from backend.vocab import Vocabulary
 
 
+def _local_stt_available() -> bool:
+    try:
+        import parakeet_mlx  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def build_stt():
+    # Local is the default, so a machine without parakeet (not Apple Silicon,
+    # or not installed yet) falls back to Deepgram rather than failing to start.
+    if config.local_stt and not _local_stt_available():
+        logger.warning("parakeet-mlx isn't installed — using deepgram for stt")
+        config.stt_backend = "deepgram"
+
     if config.local_stt:
         from backend.stt import ParakeetSTTService
 

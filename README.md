@@ -5,7 +5,7 @@ Claude Code does the actual work underneath.
 
 ```
 SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
-  state / transcript / tools                        Deepgram Flux (STT)
+  state / transcript / tools                        parakeet, on-device (STT)
   hold right ⌥ to talk                              claude -p (stream-json)
   stop button, ⌥Space                               Deepgram Aura-2 (TTS)
 ```
@@ -14,7 +14,7 @@ SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc]" websockets python-dotenv
+.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc]" websockets python-dotenv parakeet-mlx
 cp .env.example .env      # fill in DEEPGRAM_API_KEY
 ```
 
@@ -23,10 +23,11 @@ with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
 
 ### Speech recognition, on-device
 
-`STT_BACKEND=local` transcribes on the machine with
-[parakeet-mlx](https://github.com/senstella/parakeet-mlx) instead of Deepgram —
-Apple Silicon only, `pip install parakeet-mlx`, and the model downloads itself on
-first run.
+Speech is transcribed on the machine by default, with
+[parakeet-mlx](https://github.com/senstella/parakeet-mlx) — Apple Silicon only,
+and the model (~1.2 GB) downloads itself on first run. `STT_BACKEND=deepgram`
+switches to Deepgram Flux; without parakeet installed it falls back to Deepgram
+on its own.
 
 Push-to-talk is what makes this work. Flux earns its keep by deciding *when* a
 turn ended from the audio; with hold-to-talk the key already says so, so the
@@ -46,8 +47,8 @@ sessions; the threshold is set from measured pairs rather than by feel, so
 "the agent" is left alone but "bus trucker" becomes `bus-tracker`. Cloud models
 take a keyword list for this; parakeet has no biasing hook.
 
-Deepgram is still the default and still the better transcriber. TTS has no local
-path yet, so the key is still needed to hear anything back.
+Deepgram is still the better transcriber. TTS has no local path yet, so the key
+is still needed to hear anything back.
 
     .venv/bin/python scripts/stt_smoke.py   # synthesises speech, no mic needed
 
