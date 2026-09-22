@@ -575,3 +575,10 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `.../Jump.swift` | Brings a session's terminal to the front |
 | **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
 | `service/` | launchd plist for the agents daemon |
+
+## License
+
+[MIT](LICENSE).
+
+An independent project, not affiliated with or endorsed by Anthropic. Claude,
+Claude Code and Claw'd are Anthropic's.
