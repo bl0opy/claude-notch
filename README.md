@@ -1,286 +1,494 @@
 # voice-agent
 
-Voice-native Claude Code, living in the MacBook notch. Talk through code out loud;
-Claude Code does the actual work underneath.
+Voice-native Claude Code, living in the MacBook notch. Hold a key, talk through
+code out loud, and Claude Code does the actual work underneath. The same notch
+watches every other Claude Code session on the machine, so an agent stuck on a
+permission prompt in a terminal you aren't looking at shows up where you are.
 
-```
-SwiftUI notch shell  ◄── ws://127.0.0.1:8765 ──►  Python backend
-  state / transcript / tools                        parakeet, on-device (STT)
-  hold right ⌥ to talk                              claude -p (stream-json)
-  stop button, ⌥Space                               kokoro, on-device (TTS)
+Speech runs on the machine both ways. No API key, nothing billed beyond your own
+Claude plan.
+
+<p align="center">
+  <img src="docs/focus.png" width="440" alt="The notch panel on the focus tab: a permission question with allow and deny, two more waiting underneath, then the spoken turn and Claude's answer">
+  &nbsp;
+  <img src="docs/agents.png" width="440" alt="The notch panel on the agents tab: every Claude Code session on the machine with its project, branch, state and tokens">
+</p>
+
+<p align="center"><sub><b>focus</b> — the agent you're talking to &nbsp;·&nbsp; <b>agents</b> — every session on the machine</sub></p>
+
+- [What it does](#what-it-does)
+- [How it fits together](#how-it-fits-together)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Run](#run)
+- [Talking to it](#talking-to-it)
+- [Every agent, in the notch](#every-agent-in-the-notch)
+- [Every permission prompt, in one place](#every-permission-prompt-in-one-place)
+- [Speech, on-device](#speech-on-device)
+- [Configuration](#configuration)
+- [Development](#development)
+- [WebSocket protocol](#websocket-protocol)
+- [Layout](#layout)
+
+## What it does
+
+- **Talk to Claude Code.** Hold right ⌥, speak, let go. The answer is spoken
+  back (the first two sentences) and shown in full in the notch.
+- **Steer it mid-turn.** Talking again while it's working interrupts and
+  redirects it, the way typing at Claude Code mid-turn does.
+- **See every session.** Every `claude` process on the machine, terminal or
+  not: project, branch, what it's doing, tokens spent, worst state first.
+- **Answer every permission prompt from one place.** Click, press ⌃⌥Y, or say
+  "approve orbit". The terminal's own dialog closes when you do.
+- **Start agents anywhere.** `+ agent` takes a path and starts a session there,
+  owned by the notch, so you can talk to it and interrupt it.
+- **Stay out of the way.** The notch folds into the hardware notch when nothing
+  is happening and opens by itself when something needs you.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    subgraph mac["Your Mac"]
+        direction LR
+        shell["<b>Notch shell</b><br/>SwiftUI<br/>push-to-talk, panel, hotkeys"]
+        backend["<b>Voice backend</b><br/>Python · pipecat<br/>parakeet STT → claude -p → kokoro TTS"]
+        agentsd["<b>Agents daemon</b><br/>Python<br/>roster, approval inbox"]
+        hook["<b>notch_hook.py</b><br/>in every session"]
+        sessions["<b>Claude Code sessions</b><br/>terminals, editors"]
+    end
+
+    shell <-- "ws :8765<br/>turns, state, transcript" --> backend
+    shell <-- "ws :8767<br/>roster, approvals" --> agentsd
+    backend <-- "ws :8767" --> agentsd
+    hook -- "tcp :8766<br/>one question, one answer" --> agentsd
+    sessions -. "~/.claude/sessions<br/>peer sockets" .-> agentsd
+    sessions --- hook
 ```
 
-## Setup
+Three processes, each on its own port, so any one can die without taking the
+others with it:
+
+| Process | Port | Needs | What it does |
+|---|---|---|---|
+| **Notch shell** (`shell/NotchAgent`) | — | Accessibility | The notch panel, approval cards, hotkeys, push-to-talk |
+| **Voice backend** (`python -m backend.main`) | ws :8765 | `claude` on PATH | Mic, speech to text, the voice agent, text to speech, spoken commands |
+| **Agents daemon** (`python -m agentsd`) | ws :8767, tcp :8766 | nothing | Lists every Claude Code session, holds every open permission question |
+
+The daemon and the shell work without the voice backend: you still get cards,
+clicks and hotkeys, just nothing spoken.
+
+A spoken turn, end to end:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor You
+    participant Shell as Notch shell
+    participant Backend as Voice backend
+    participant Claude as claude -p
+
+    You->>Shell: hold right ⌥
+    Shell->>Backend: {"type":"ptt","down":true}
+    Note over Backend: mic opens, audio buffers
+    You->>Shell: let go
+    Shell->>Backend: {"type":"ptt","down":false}
+    Note over Backend: +400 ms tail, then parakeet<br/>transcribes the buffer (~60–90 ms)
+    Backend->>Shell: transcript
+    Backend->>Claude: user turn (stream-json)
+    Claude-->>Backend: text deltas, tool calls
+    Backend-->>Shell: assistant_delta, tool
+    Note over Backend: code and markdown stripped,<br/>first 2 sentences to kokoro
+    Backend-->>You: speech (~0.3–0.7 s to first audio)
+```
+
+## Requirements
+
+- macOS on Apple Silicon (parakeet-mlx is MLX-only; set `STT_BACKEND=deepgram`
+  on Intel).
+- Python 3.11 (pyenv 3.11.6 is what it's built on).
+- Swift 5.9+ / Xcode command line tools, to build the shell.
+- [Claude Code](https://code.claude.com) on PATH and logged in.
+- About 1.6 GB of disk for the speech models, downloaded on first run.
+
+## Install
 
 ```bash
+git clone https://github.com/bl0opy/voice-agent.git && cd voice-agent
 pyenv local 3.11.6 && python -m venv .venv
 .venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
 ```
 
-That's all it needs. Speech both ways runs on the machine, so there's no API key
-and nothing billed beyond your own Claude plan. A Deepgram key is optional, for
-the cloud voice or transcriber (`cp .env.example .env`).
+That's everything. Then, optionally:
 
-`claude` must be on PATH and already logged in. It runs on Sonnet 5 — override
-with `CLAUDE_MODEL`, or set it empty to use the CLI's own default.
+```bash
+scripts/install-hooks.sh     # answer every session's permission prompts from the notch
+scripts/install-agentsd.sh   # run the agents daemon at login (launchd)
+```
 
-### Speech recognition, on-device
-
-Speech is transcribed on the machine by default, with
-[parakeet-mlx](https://github.com/senstella/parakeet-mlx) — Apple Silicon only,
-and the model (~1.2 GB) downloads itself on first run. `STT_BACKEND=deepgram`
-switches to Deepgram Flux; without parakeet installed it falls back to Deepgram
-on its own.
-
-Push-to-talk is what makes this work. Flux earns its keep by deciding *when* a
-turn ended from the audio; with hold-to-talk the key already says so, so the
-local model only has to transcribe a bounded buffer on release. Measured on an
-M1 Max with `parakeet-tdt-0.6b-v3`, after a 1.6 s load at startup:
-
-| audio | key-up to text |
-|---|---|
-| 0.7 s — "what's waiting" | 57 ms |
-| 2.4 s — a short sentence | 78 ms |
-| 3.4 s — a long one | 86 ms |
-
-It mishears names it has never seen — "descant" comes back as "desk and" — which
-matters because the spoken commands are addressed by project. `backend/vocab.py`
-puts them back, matching runs of words against the repos that currently have
-sessions; the threshold is set from measured pairs rather than by feel, so
-"the agent" is left alone but "bus trucker" becomes `bus-tracker`. Cloud models
-take a keyword list for this; parakeet has no biasing hook.
-
-Deepgram is still the better transcriber.
-
-    .venv/bin/python scripts/stt_smoke.py   # synthesises speech, no mic needed
-
-### Speech out, on-device
-
-Replies are spoken by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
-through kokoro-onnx, which pipecat already wraps. The ~350 MB model downloads
-on first run. `KOKORO_VOICE` picks the voice (`af_heart` by default).
-`TTS_BACKEND=deepgram` switches back to Aura-2, and without kokoro-onnx
-installed it falls back on its own.
-
-It renders a whole sentence before any of it plays, so what you wait for is
-the first sentence of a reply. Later sentences render while earlier ones play,
-about 4x faster than realtime. Measured on an M1 Max:
-
-| sentence | first audio |
-|---|---|
-| "Done." | 269 ms |
-| "Orbit wants to push to git." | 432 ms |
-| "The notch should reconnect on its own within a few seconds." | 709 ms |
-
-Aura-2 starts a little sooner and sounds a little better. CoreML makes no
-difference, and the MLX build of Kokoro needs espeak data it couldn't find,
-so the ONNX one is the default.
-
-    .venv/bin/python scripts/tts_smoke.py [out.wav]   # write it out to listen
+**Permissions.** System Settings → Privacy & Security → **Accessibility**: allow
+whichever app launches the notch (Terminal, if you use `./run.sh`). Push-to-talk,
+⌥Space and ⌃⌥Y / N / J all need it. macOS asks for **Automation** the first time
+↗ selects a tab in Terminal or iTerm2, and for the **Microphone** the first time
+the backend opens it.
 
 ## Run
 
 ```bash
-./run.sh                       # agents daemon + backend + shell
-.venv/bin/python -m backend.main   # backend only
+./run.sh
 ```
 
-Hold **right ⌥** to talk, let go when you're done — the mic is shut the rest of
+That builds the shell, starts the agents daemon (unless launchd already runs
+it), the voice backend, and the notch. Ctrl-C, or quitting the notch from its
+menu bar item (◎), stops everything it started. If the repo has moved, `run.sh`
+clears SwiftPM's stale cache and builds again.
+
+Pieces on their own:
+
+```bash
+.venv/bin/python -m backend.main               # voice backend only
+.venv/bin/python -m agentsd                    # agents daemon only
+.venv/bin/python -m agentsd --once             # print one roster snapshot and exit
+shell/NotchAgent/.build/release/NotchAgent     # notch only (build with swift build -c release)
+```
+
+## Talking to it
+
+Hold **right ⌥** to talk, let go when you're done. The mic is shut the rest of
 the time. It's a global monitor, so it works in whatever app is frontmost, and
-nothing binds right ⌥ on its own, so it never doubles as a shortcut. Holding it
-while Claude is talking cuts it off. Needs Accessibility permission. Set
-`PUSH_TO_TALK=0` for the old always-on mic.
+nothing on macOS binds right ⌥ on its own, so it never doubles as a shortcut.
+Holding it while Claude is talking cuts it off.
 
-**The key ends the turn, not the silence.** Flux calls end-of-turn on every
-pause, so thinking mid-sentence used to send half a question. While the key is
-down those pieces are collected and the notch shows them building up; the turn
-is sent when you let go, plus `PTT_TAIL_MS` (400) for the words that arrive
-after the key is already up.
+**The key ends the turn, not the silence.** Pausing to think mid-sentence doesn't
+send half a question. The turn is sent when you let go, plus `PTT_TAIL_MS` (400)
+for the words that arrive after the key is already up.
 
-Talking again while it's still working **steers** it, the way typing at Claude
-Code mid-turn does: the in-flight turn is interrupted and the new one goes in
-its place. Nothing waits for a turn to finish first. A session running in a
-terminal can't be steered — it has no input we can cut into — so words for a
-busy one are held and delivered when it frees up, and given up on after two
-minutes rather than held forever.
+**Talking again steers it.** While it's still working, a new turn interrupts the
+one in flight and goes in its place. A session running in a terminal can't be
+interrupted from outside, so words for a busy one are held and delivered when it
+frees up, and dropped after two minutes rather than held forever.
 
-Pick a different key with `PTT_KEY` (env, or `PTTKey` in defaults):
-`rightOption` (default), `rightCommand`, `fn`, `leftOption`, `command`. `command`
-is the old behaviour — it has to be held alone for 200 ms and any other key
-cancels it, since ⌘ is half of every shortcut on the machine.
+**It speaks briefly and shows everything.** At most two sentences per turn are
+spoken (`SPOKEN_SENTENCES`); the notch shows the full answer. Code, diffs and
+markdown are stripped from anything spoken. Permission questions are spoken as
+"orbit wants to push to git"; the command itself stays on screen.
 
-It speaks at most two sentences per turn (`SPOKEN_SENTENCES`) — the notch still
-shows the full answer, and `backend/speech.py` strips code, diffs and markdown
-out of whatever does get spoken. Permission questions are spoken as
-"orbit wants to push to git"; the actual command stays on screen.
+Other keys, from any app:
 
-The notch behaves like a Dynamic Island. When nothing is working, waiting or
-talking for 8 s it folds into the hardware notch and disappears. Anything
-starting up brings it back as a small pill: status on the left, Claw'd on the
-right. Hover it (or the bare notch) and one black shape springs open into the
-panel; a new permission question opens it by itself. Click to pin it open.
-`stop` (or ⌥Space anywhere) interrupts.
+| Key | Does |
+|---|---|
+| right ⌥ (hold) | Talk |
+| ⌥Space | Interrupt the focused agent |
+| ⌃⌥Y / ⌃⌥N | Allow / deny the oldest permission question |
+| ⌃⌥J | Bring the terminal that question came from to the front |
+
+Pick a different talk key with `PTT_KEY` (in the environment `run.sh` starts
+from, or `defaults write` `PTTKey`): `rightOption` (default), `rightCommand`,
+`fn`, `leftOption`, `command`. `command` has to be held alone for 200 ms and any
+other key cancels it, since ⌘ is half of every shortcut. `PUSH_TO_TALK=0` gives
+the old always-on mic.
+
+### The notch
+
+It behaves like a Dynamic Island. After 8 s with nothing working, waiting or
+talking, it folds into the hardware notch and disappears. Anything starting up
+brings it back as a small pill: status on the left, Claw'd on the right. Hover
+it (or the bare notch) and it springs open into the panel; a new permission
+question opens it by itself. Click to pin it open.
 
 Claw'd shows the mood of the whole fleet: he hops while anything is working,
 paces while something waits on you, stands still and looks up while the mic is
-open, bobs while talking, and otherwise blinks, glances around and shuffles —
-falling asleep, grey with the odd z, after 45 s of quiet.
-
-`MOCK_SCENE=cycle .venv/bin/python scripts/mock_agents.py` walks through
-questions → working → idle every 40 s, to watch it open, shrink and fold.
+open, bobs while talking, and otherwise blinks, glances around and shuffles,
+falling asleep (grey, the odd z) after 45 s of quiet.
 
 ## Every agent, in the notch
 
-The expanded panel has two tabs. **focus** is the agent you're talking to — what
-you said, what it said, what it's doing. **agents** is the dashboard: every
-Claude Code session on the machine, project, branch, what it's doing, tokens
-spent, worst state first, so an agent blocked on a permission prompt sits at the
-top. Click a row to focus it: the focused agent is the one that hears the mic and
-the only one that speaks. Everything else works silently and gets a one-line
+The panel has two tabs. **focus** is the agent you're talking to: what you said,
+what it said, what it's doing. **agents** is the dashboard: every Claude Code
+session on the machine, worst state first, so one blocked on a permission prompt
+sits at the top.
+
+Click a row to focus it. The focused agent is the one that hears the mic and the
+only one that speaks; everything else works silently and gets a one-line
 interjection when it asks for something or finishes a long turn. Hover a row for
 **↗** (bring its terminal forward) and **■** (stop it, for agents the notch
-started). The dashboard is also on the menu bar item, and the count beside the
-status dot opens it.
+started).
 
-Above the roster, one line for the whole machine: how many sessions, how many
-tokens they've spent between them, what that would cost at API rates, and which
-window is closest to full. Windows don't add up — five sessions don't share one —
-so what's shown is the fullest, turning amber once anything is past three
-quarters, which is the thing that predicts a compaction. A subscription isn't
-billed per token, so the dollars are a size for comparing sessions, not a bill.
+Above the roster is one line for the whole machine: how many sessions, tokens
+spent between them, what that would cost at API rates, and which context window
+is closest to full. Windows don't add up (five sessions don't share one), so
+what's shown is the fullest, turning amber past three quarters, which is what
+predicts a compaction. A subscription isn't billed per token, so the dollars are
+for comparing sessions, not a bill.
 
-**+ agent** on the dashboard (or *New agent…* in the menu) asks for a path and
-starts an agent there, owned by the notch — which is what makes it steerable and
-interruptible. The status dot count and the roster
-come from the agents daemon; if it isn't running the dashboard says so instead of
-showing nothing.
+### Starting an agent
 
-The path starts filled in with `default_agent_path` from `settings.json`
-(`run.sh` copies it from `settings.example.json` the first time), and a
-bare name like `bus-tracker` is taken relative to it:
+**+ agent** on the dashboard (or *New agent…* in the menu bar item) asks for a
+path and starts an agent there, owned by the notch, which is what makes it
+steerable and interruptible.
+
+<p align="center">
+  <img src="docs/path-prompt.png" width="412" alt="The Start agent prompt, filled in with the default path">
+</p>
+
+It starts filled in with `default_agent_path` from `settings.json`. A bare name
+like `bus-tracker` is taken relative to it; `~` and absolute paths work too. A
+path that isn't a directory keeps the prompt open and says so.
 
 ```json
 { "default_agent_path": "~/Documents/GitHub/Personal" }
 ```
 
-```bash
-.venv/bin/python -m agentsd --once   # print one snapshot and exit
-scripts/install-agentsd.sh           # run it at login (launchd, ports 8767 + 8766)
-scripts/install-hooks.sh             # answer every session's permission prompts from the notch
-```
+`settings.json` is yours and gitignored; `run.sh` copies it from
+`settings.example.json` the first time. It's read each time you open the prompt,
+so edits apply without a restart.
 
-Agents come in two kinds, and the notch is explicit about which is which:
+### Owned agents and terminal agents
 
-| | started by the notch | started in a terminal |
+| | Started by the notch | Started in a terminal |
 |---|---|---|
-| listed, with live state and tokens | yes | yes |
-| focus, talk to it, hear it back | yes | yes |
-| interrupt | yes | no — `stop` reads `can't stop` |
-| approve or deny from the notch, by voice or key | yes | yes, with `install-hooks.sh` |
+| Listed, with live state and tokens | yes | yes |
+| Focus it, talk to it, hear it back | yes | yes |
+| Interrupt | yes | no — `stop` reads `can't stop` |
+| Approve or deny from the notch, by voice or key | yes | yes, with `install-hooks.sh` |
 
 Talking to a terminal session goes over the peer socket Claude Code already
 serves (`/tmp/cc-socks/<pid>.sock`, authenticated with that session's own key
-file) and its answer is read back from its transcript. If it's mid-turn the words
-are held and delivered the moment it's free, so nothing lands as a dialog in a
-window you aren't looking at. It can't be interrupted from outside, which is why
-the notch can start agents of its own.
+file), and its answer is read back from its transcript. If it's mid-turn the
+words are held and delivered the moment it's free, so nothing lands as a dialog
+in a window you aren't looking at.
+
+Both are undocumented surfaces (`~/.claude/sessions/` and the peer socket),
+verified against Claude Code 2.1.273. When either changes, rows degrade to
+`unknown` and the roster keeps working rather than the daemon crashing.
 
 ## Every permission prompt, in one place
 
 `scripts/install-hooks.sh` adds one hook to `~/.claude/settings.json` (a copy of
 `hooks/notch_hook.py` in `~/.claude/hooks`, run by the system python, so it
-survives the repo moving). It applies to every Claude Code session, including ones
-already running. `--uninstall` takes it out again, and the file is backed up to
+survives the repo moving). It applies to every Claude Code session, including
+ones already running. `--uninstall` takes it out; the file is backed up to
 `settings.json.bak-notch` either way.
 
-When a session would ask you something, its dialog comes up in its terminal as
-usual **and** the same question shows in the notch. Answer in either place;
-the other one closes. With the agents daemon down the hook does nothing and
-the terminal is the only place to answer, same as before.
+```mermaid
+flowchart TD
+    call["A session is about to ask you something"] --> hook["notch_hook.py"]
+    hook -->|"daemon down"| terminal["Terminal dialog only,<br/>same as without the notch"]
+    hook -->|"daemon up"| inbox["agentsd inbox"]
+    inbox --> card["Card in the notch<br/>(and spoken, if the backend is up)"]
+    inbox --> dialog["Terminal dialog, as usual"]
+    card -->|"allow · deny · ⌃⌥Y · 'approve orbit'"| decided["Answered"]
+    dialog -->|"answered there"| decided
+    decided --> close["The other one closes"]
+```
 
-The notch opens on its own for a new question, oldest first: the project, the
+The notch opens by itself for a new question, oldest first: the project, the
 exact command or path, and **allow** / **always** / **deny** / **↗**. Anything
 else waiting sits underneath as one line with ✓ ✕. **hide** closes the panel
-until the next new question; the amber count stays in the collapsed notch.
+until the next new question; the amber count stays on the collapsed notch.
 
-From any app:
+### Spoken commands
 
-| | |
+These are matched before anything goes to the agent, so they're instant:
+
+| Say | Does |
 |---|---|
-| ⌃⌥Y / ⌃⌥N | allow / deny the oldest question |
-| ⌃⌥J | bring the terminal it came from to the front |
-| ⌥Space | interrupt the focused agent |
-
-By voice (hold right ⌥). These are matched before anything goes to the agent,
-so they're instant:
-
-| say | does |
-|---|---|
-| "yes", "go ahead" / "no", "nope" | answers the oldest question |
-| "approve orbit", "deny bus tracker" | answers that project's question |
-| "always allow orbit" | allow and keep the rule Claude Code suggested |
-| "what's waiting" | one sentence: who's asking what, who's working |
-| "what's this costing", "context usage" | the whole fleet: tokens, dollars, fullest window |
-| "go to descant", "back" | hand an agent the mic, or return it to the voice agent |
-| "stop orbit" | interrupt it, if the notch started it |
+| "yes", "go ahead" / "no", "nope" | Answers the oldest question |
+| "approve orbit", "deny bus tracker" | Answers that project's question |
+| "always allow orbit" | Allow, and keep the rule Claude Code suggested |
+| "what's waiting" | One sentence: who's asking what, who's working |
+| "what's this costing", "context usage" | The whole fleet: tokens, dollars, fullest window |
+| "go to descant", "back" | Hand an agent the mic, or return it to the voice agent |
+| "stop orbit" | Interrupt it, if the notch started it |
 
 A bare "yes" won't pass a destructive command (`rm -rf`, `git push`,
-`reset --hard`, `sudo`, package installs…): the notch says "that one wants to
+`reset --hard`, `sudo`, package installs…). The notch says "that one wants to
 push to git — say approve orbit" and waits for the name. Four words or fewer
 counts as a bare answer, so "ok but first rename it" still goes to the agent.
 
-Out loud you get "orbit wants to push to git" when a question arrives and
+Out loud you hear "orbit wants to push to git" when a question arrives and
 "orbit is done" when a turn of 30 s or more finishes somewhere you aren't
 focused. Several at once are said together, never while you're holding the key
 or it's already talking, and a question answered before it gets a word in isn't
 said at all.
 
-↗ picks the exact tab in Terminal and iTerm2 (macOS asks for Automation
-permission the first time). VS Code, Cursor and the rest just come to the front.
+### Owned agents' approvals
 
-Both are undocumented surfaces (`~/.claude/sessions/` and the peer socket),
-verified against 2.1.251. When either changes, rows degrade to `unknown` and the
-roster keeps working rather than the daemon crashing.
+Agents the notch starts run in `CLAUDE_PERMISSION_MODE` (default `auto`), with no
+dialog of their own. The hook, given to them as a `PreToolUse` hook, sends the
+risky minority (`rm -rf`, `sudo`, `git push` / `reset --hard`, package installs,
+writes outside the project, `WebFetch`) to the same inbox and lets everything
+else through, so auto mode stays quiet. There's nowhere else to answer those, so
+they fail closed: no answer in `APPROVAL_TIMEOUT_S` (180), or no daemon at all,
+is a deny.
 
-## Layout
+Edit `RISKY_BASH` in `hooks/notch_hook.py` and `agentsd/risk.py` together to
+change what gets gated.
 
-| Path | What |
+The hook can *veto* a tool call, but a hook `allow` does not override Claude
+Code's own refusals: approving something the CLI itself refuses in headless mode
+(`rm -rf`, for one) still won't run it. Claude Code keeps the final say.
+
+> **No cards showing up?** If `~/.claude/settings.json` sets
+> `permissions.defaultMode` to `auto`, Claude Code runs most commands without
+> asking, so there's nothing to show. `claude --permission-mode default` (or
+> shift+tab in a running session) brings the prompts back.
+
+## Speech, on-device
+
+### In: parakeet
+
+Speech is transcribed on the machine with
+[parakeet-mlx](https://github.com/senstella/parakeet-mlx). The model (~1.2 GB)
+downloads itself on first run and loads in about 1.6 s at startup.
+
+Push-to-talk is what makes a local model work here. A streaming cloud model
+earns its keep by deciding *when* a turn ended from the audio; with hold-to-talk
+the key already says so, so the local model only has to transcribe a bounded
+buffer on release. Measured on an M1 Max with `parakeet-tdt-0.6b-v3`:
+
+| Audio | Key-up to text |
 |---|---|
-| `backend/main.py` | Pipecat pipeline wiring |
-| `backend/claude_code.py` | Long-lived `claude -p` subprocess, stream-json in/out |
-| `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
-| `backend/speech.py` | Strips code blocks/diffs/markdown before anything is spoken |
-| `backend/stt.py` | On-device speech recognition, segmented by the PTT key |
-| `backend/vocab.py` | Puts back project names a local model mishears |
-| `backend/ptt.py` | Push-to-talk gate — silences the mic unless the key is held |
-| `backend/agents.py` | Who has focus; routes a spoken turn to the right agent |
-| `backend/commands.py` | Spoken fleet commands — approve, deny, status, go to, stop |
-| `backend/fleet.py` | The backend's link to the agents daemon: roster, questions, events |
-| `agentsd/` | Watches every session, serves the roster, talks to foreign ones |
-| `agentsd/inbox.py` | Every open permission question, held until it's answered somewhere |
-| `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
-| `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
-| `backend/bridge.py` | WebSocket server the notch shell talks to |
-| `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
-| `shell/NotchAgent/` | SwiftUI app (SPM executable) |
-| `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
-| `shell/.../PathPrompt.swift` | Path prompt behind `+ agent` |
-| `settings.example.json` | Notch settings template — copied to `settings.json` |
-| `shell/.../Jump.swift` | Brings a session's terminal to the front |
-| `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
-| `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |
-| `scripts/peer_smoke.py` | Proves a foreign session can be messaged and heard |
-| `scripts/director_smoke.py` | Proves focus routing, owned and foreign, no audio |
-| `scripts/inbox_smoke.py` | Proves the inbox with the real hook: concurrency, fallbacks, cleanup |
-| `scripts/commands_smoke.py` | Table test for the spoken command grammar |
-| `scripts/fleet_smoke.py` | Voice answering questions end to end, speech captured |
-| `scripts/stt_smoke.py` | Local STT: 48 kHz in, corrected text out, timed |
-| `scripts/tts_smoke.py` | Local TTS: time to first audio per sentence, no key |
-| `scripts/tail_smoke.py` | Proves a foreign agent's answer is what gets spoken |
+| 0.7 s — "what's waiting" | 57 ms |
+| 2.4 s — a short sentence | 78 ms |
+| 3.4 s — a long one | 86 ms |
+
+It mishears names it has never seen ("descant" comes back as "desk and"), which
+matters because spoken commands are addressed by project. `backend/vocab.py`
+puts them back by matching runs of words against the repos that currently have
+sessions. The threshold is set from measured pairs, so "the agent" is left alone
+but "bus trucker" becomes `bus-tracker`.
+
+### Out: Kokoro
+
+Replies are spoken by [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)
+through kokoro-onnx, which pipecat already wraps. The model (~350 MB) downloads
+on first run; `KOKORO_VOICE` picks the voice (`af_heart` by default).
+
+It renders a whole sentence before any of it plays, so what you wait for is the
+first sentence of a reply. Later sentences render while earlier ones play, about
+4x faster than realtime. Measured on an M1 Max:
+
+| Sentence | First audio |
+|---|---|
+| "Done." | 269 ms |
+| "Orbit wants to push to git." | 432 ms |
+| "The notch should reconnect on its own within a few seconds." | 709 ms |
+
+CoreML makes no difference, and the MLX build of Kokoro needs espeak data it
+couldn't find, so the ONNX one is the default.
+
+### Deepgram, if you want it
+
+`STT_BACKEND=deepgram` switches to Deepgram Flux (the better transcriber) and
+`TTS_BACKEND=deepgram` to Aura-2 (starts a little sooner, sounds a little
+better). Both share one `DEEPGRAM_API_KEY`. Without parakeet or kokoro-onnx
+installed, the backend falls back to Deepgram on its own.
+
+## Configuration
+
+Two files, both optional and both gitignored:
+
+- **`settings.json`** — the notch shell's settings. Currently just
+  `default_agent_path`.
+- **`.env`** — the backend's and daemon's environment. Anything below can also
+  be set in the shell environment instead.
+
+### Speech
+
+| Variable | Default | |
+|---|---|---|
+| `STT_BACKEND` | `local` | `local` (parakeet) or `deepgram` |
+| `TTS_BACKEND` | `kokoro` | `kokoro` or `deepgram` |
+| `PARAKEET_MODEL` | `mlx-community/parakeet-tdt-0.6b-v3` | |
+| `KOKORO_VOICE` | `af_heart` | |
+| `DEEPGRAM_API_KEY` | — | Only needed for a Deepgram backend |
+| `DEEPGRAM_MODEL` | `flux-general-en` | |
+| `DEEPGRAM_VOICE` | `aura-2-thalia-en` | |
+| `EOT_THRESHOLD` / `EOT_TIMEOUT_MS` | `0.7` / `1500` | Flux end-of-turn tuning, without push-to-talk |
+
+### Claude
+
+| Variable | Default | |
+|---|---|---|
+| `CLAUDE_MODEL` | `claude-sonnet-5` | Empty uses the CLI's own default |
+| `CLAUDE_PERMISSION_MODE` | `auto` | For agents the notch starts |
+| `CLAUDE_CWD` | where the backend started | The voice agent's own working directory |
+| `CANCEL_ON_INTERRUPT` | `1` | Interrupting also cancels the in-flight turn |
+| `APPROVAL_TIMEOUT_S` | `180` | Unanswered owned-agent question becomes a deny |
+
+### Talking
+
+| Variable | Default | |
+|---|---|---|
+| `PUSH_TO_TALK` | `1` | `0` for an always-on mic |
+| `PTT_KEY` | `rightOption` | Read by the shell, not the backend |
+| `PTT_TAIL_MS` | `400` | How long after key-up the turn is sealed |
+| `SPOKEN_SENTENCES` | `2` | The notch shows everything regardless |
+| `MIC_GATE` | `1` | Hold the mic shut while it talks; `0` on headphones |
+| `MIC_GATE_TAIL_MS` | `250` | |
+
+### Audio
+
+| Variable | Default | |
+|---|---|---|
+| `AUDIO_IN_DEVICE` / `AUDIO_OUT_DEVICE` | built-in | Name substring or pyaudio index |
+| `AUDIO_SAMPLE_RATE` | `48000` | One rate for mic, speakers and pipeline |
+| `TTS_SAMPLE_RATE` | `24000` | Render native, resample locally |
+
+Left empty, the devices pin the MacBook's built-in mic and speakers by name, so
+a connected interface never gets picked up just because it's the system default.
+The built-in devices are natively 48 kHz, so nothing resamples at the device.
+Kokoro and Aura-2 are 24 kHz models, so that step has to happen somewhere:
+asking Deepgram for 48 kHz leaves 0.17% of the energy above 12 kHz (imaging
+junk, which reads as harsh); pipecat's soxr VHQ leaves none.
+
+The built-in mic hears the built-in speakers (3.5x room noise at moderate
+volume) and there's no echo canceller, which is why `MIC_GATE` is on by default.
+With push-to-talk the gate is redundant anyway.
+
+### Ports and daemon
+
+| Variable | Default | |
+|---|---|---|
+| `WS_HOST` / `WS_PORT` | `127.0.0.1` / `8765` | Backend ↔ shell |
+| `AGENTS_URL` | `ws://127.0.0.1:8767` | Where the backend finds the daemon |
+| `AGENTS_WS_PORT` | `8767` | Daemon ↔ shell and backend |
+| `NOTCH_INBOX_PORT` | `8766` | Hook → daemon |
+| `AGENTS_TICK_S` | `1.0` | Roster refresh |
+| `AGENTS_SEND_DETAILS` | `1` | `0` keeps prompt text and tool arguments off the socket |
+| `NOTCH_TERMINAL_WAIT_S` | `590` | How long a terminal session's question stays in the notch |
+
+## Development
+
+Mock backends, so the shell can be worked on without a mic, models or agents:
+
+```bash
+.venv/bin/python scripts/mock_bridge.py                     # fake voice backend on :8765
+.venv/bin/python scripts/mock_agents.py                     # fake roster and questions on :8767
+MOCK_SCENE=cycle .venv/bin/python scripts/mock_agents.py    # questions → working → idle every 40 s
+```
+
+The screenshots above are the real shell against these two.
+
+Smoke tests, no audio or API keys needed:
+
+```bash
+.venv/bin/python scripts/stt_smoke.py         # local STT: synthesised speech in, corrected text out, timed
+.venv/bin/python scripts/tts_smoke.py out.wav # local TTS: time to first audio per sentence
+.venv/bin/python scripts/commands_smoke.py    # spoken command grammar
+.venv/bin/python scripts/inbox_smoke.py       # the inbox with the real hook: concurrency, fallbacks
+.venv/bin/python scripts/fleet_smoke.py       # voice answering questions end to end
+.venv/bin/python scripts/director_smoke.py    # focus routing, owned and foreign
+.venv/bin/python scripts/peer_smoke.py        # a foreign session can be messaged and heard
+.venv/bin/python scripts/tail_smoke.py        # a foreign agent's answer is what gets spoken
+```
+
+The manual test checklist and troubleshooting table are in [SETUP.md](SETUP.md).
 
 ## WebSocket protocol
 
-Backend → shell:
+Backend → shell (`ws://127.0.0.1:8765`):
 
 ```json
 {"type": "state",           "value": "idle|listening|thinking|speaking|error"}
@@ -292,6 +500,7 @@ Backend → shell:
 {"type": "mic",             "open": true}
 {"type": "session",         "id": "...", "cwd": "..."}
 {"type": "focus",           "id": "<session id>"}
+{"type": "owned",           "ids": ["..."]}
 {"type": "delivery",        "id": "...", "status": "queued|delivered|refused"}
 {"type": "error",           "message": "..."}
 ```
@@ -305,8 +514,11 @@ Shell → backend:
 {"type": "ptt",         "down": true}
 {"type": "focus",       "id": "<session id>"}
 {"type": "start_agent", "cwd": "/path/to/a/repo"}
-{"type": "hello"}       // on connect: replay owned ids, focus and cwd
+{"type": "hello"}
 ```
+
+`hello` is sent on every connect; the backend replies with the owned ids, focus
+and cwd so a reconnected shell doesn't show stale state.
 
 Agents daemon (`ws://127.0.0.1:8767`) → shell and backend:
 
@@ -325,65 +537,41 @@ Shell or backend → agents daemon:
 ```
 
 The hook talks to the daemon on `127.0.0.1:8766`: one JSON line describing the
-call, one line back — `{"decision": "allow|deny|none", "reason": "...", "permissions": [...]}`.
+call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissions": [...]}`.
 
-## Config
+## Layout
 
-All via `.env`: `STT_BACKEND`, `PARAKEET_MODEL`, `TTS_BACKEND`, `KOKORO_VOICE`,
-`DEEPGRAM_MODEL`, `DEEPGRAM_VOICE`,
-`EOT_THRESHOLD`, `EOT_TIMEOUT_MS`,
-`CLAUDE_CWD`, `CLAUDE_MODEL`, `CLAUDE_PERMISSION_MODE`, `APPROVAL_TIMEOUT_S`,
-`AGENTS_URL`, `CANCEL_ON_INTERRUPT`, `PUSH_TO_TALK`, `PTT_TAIL_MS`, `SPOKEN_SENTENCES`,
-`WS_HOST`, `WS_PORT`. The agents daemon reads `AGENTS_WS_PORT` (8767),
-`AGENTS_TICK_S`, `AGENTS_SEND_DETAILS` (set 0 to keep prompt text and tool
-arguments off the socket), `NOTCH_INBOX_PORT` (8766), `APPROVAL_TIMEOUT_S` and
-`NOTCH_TERMINAL_WAIT_S` (590 — how long a terminal session's question stays in
-the notch; its own dialog stays regardless). `PTT_KEY` is read by the shell, not the backend, so it has
-to be in the environment `run.sh` starts the app from (or `defaults write` it).
-
-### Approvals
-
-Agents the notch starts run in `CLAUDE_PERMISSION_MODE` (default `auto`), with
-no dialog of their own. `hooks/notch_hook.py`, given to them as a `PreToolUse`
-hook, sends the risky minority — `rm -rf`, `sudo`, `git push`/`reset --hard`,
-package installs, writes outside the project, `WebFetch` — to the same inbox as
-every terminal session's prompts, and lets everything else through so auto mode
-stays quiet. There's nowhere else to answer those, so they fail closed: no answer
-in `APPROVAL_TIMEOUT_S` (180), or no agents daemon at all, is a deny.
-
-Edit `RISKY_BASH` in `hooks/notch_hook.py` and `agentsd/risk.py` together to
-change what gets gated and what counts as destructive.
-
-One limit worth knowing: the hook can *veto* a tool call, but a hook `allow`
-does not override Claude Code's own refusals. Verified against the CLI: approving
-a call the CLI already permits runs it, and denying blocks it — but approving
-something the CLI itself refuses in headless mode (`rm -rf`, for one) still won't
-run it, in any permission mode. Claude Code keeps the final say.
-
-### Audio
-
-`AUDIO_IN_DEVICE` / `AUDIO_OUT_DEVICE` take a device name substring or a pyaudio
-index. Left empty they pin the MacBook built-in mic and speakers by name, so a
-connected interface never gets picked up just because it is the system default.
-
-`AUDIO_SAMPLE_RATE` (default 48000) drives the mic, the speakers and the pipeline
-as one rate. The built-in devices are natively 48 kHz, so nothing resamples at the
-device layer. The backend logs each device's native rate at startup and warns if
-it disagrees with the one you asked for.
-
-`MIC_GATE` (default 1) holds the mic shut while the agent talks, plus
-`MIC_GATE_TAIL_MS` (default 250) for the room to settle. The built-in mic hears
-the built-in speakers — measured at 3.5x room noise at moderate volume — and
-there is no echo canceller here, so an open mic makes Flux transcribe the
-agent's own voice, fire an interrupt, and set Claude Code answering itself in a
-loop. The cost is that voice barge-in stops working; Option-Space and the stop
-button still interrupt. Set `MIC_GATE=0` on headphones to get barge-in back.
-
-`TTS_SAMPLE_RATE` (default 24000) is the one deliberate exception: Kokoro and
-aura-2 are both 24 kHz models, so 24 -> 48 kHz has to happen somewhere. Measured on one utterance,
-asking Deepgram for 48 kHz leaves 0.17% of total energy above 12 kHz — imaging
-junk above the model's own Nyquist, which is what reads as harsh. Rendering
-native and resampling locally through pipecat's soxr VHQ leaves 0.00000% up
-there, so that is the default.
-
-With the Deepgram backends, STT and TTS share one key — no second vendor.
+| Path | What |
+|---|---|
+| `run.sh` | Builds the shell, starts everything, stops it all on exit |
+| `settings.example.json` | Template for `settings.json` |
+| **`backend/`** | **Voice backend** |
+| `backend/main.py` | Pipecat pipeline wiring, shell message handlers |
+| `backend/config.py` | Every environment variable and its default |
+| `backend/claude_code.py` | Long-lived `claude -p` subprocess, stream-json in and out |
+| `backend/processor.py` | Sits where an LLM service would; drives Claude Code, feeds TTS |
+| `backend/agents.py` | Who has focus; routes a spoken turn to the right agent |
+| `backend/commands.py` | Spoken fleet commands: approve, deny, status, go to, stop |
+| `backend/fleet.py` | The backend's link to the agents daemon |
+| `backend/stt.py` | On-device speech recognition, segmented by the talk key |
+| `backend/vocab.py` | Puts back project names a local model mishears |
+| `backend/speech.py` | Strips code, diffs and markdown before anything is spoken |
+| `backend/ptt.py` | Push-to-talk gate: silences the mic unless the key is held |
+| `backend/mic_gate.py` | Holds the mic shut while it talks |
+| `backend/bridge.py` | WebSocket server the shell talks to |
+| **`agentsd/`** | **Agents daemon** |
+| `agentsd/registry.py` | Every Claude Code session on the machine |
+| `agentsd/inbox.py` | Every open permission question, held until it's answered somewhere |
+| `agentsd/peer.py` | Talks to terminal sessions over their peer socket |
+| `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
+| `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
+| **`hooks/`** | |
+| `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
+| **`shell/NotchAgent/`** | **SwiftUI app (SPM executable)** |
+| `.../NotchView.swift` | The panel: focus and agents tabs, cards, roster |
+| `.../PushToTalk.swift` | Global key watcher: right ⌥ opens the mic |
+| `.../PathPrompt.swift` | The path prompt behind `+ agent` |
+| `.../Settings.swift` | Reads `settings.json` |
+| `.../Jump.swift` | Brings a session's terminal to the front |
+| **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
+| `service/` | launchd plist for the agents daemon |
