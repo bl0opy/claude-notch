@@ -6,7 +6,8 @@ import AppKit
 /// like `bus-tracker` is taken relative to it; `~` and absolute paths are too.
 ///
 /// The notch is an accessory app with a non-activating panel, so the alert has
-/// to be raised deliberately or it opens behind whatever you were using.
+/// to be raised deliberately or it opens behind whatever you were using, or
+/// behind the notch itself.
 @MainActor
 enum PathPrompt {
     static func ask() -> String? {
@@ -26,8 +27,10 @@ enum PathPrompt {
             field.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
             alert.accessoryView = field
             alert.window.initialFirstResponder = field
-            alert.window.level = .modalPanel
 
+            // runModal drops the alert to the modal-panel level, under the notch
+            // window it usually overlaps, so lift it once it's up.
+            DispatchQueue.main.async { alert.window.level = .statusBar + 2 }
             NSApp.activate(ignoringOtherApps: true)
             guard alert.runModal() == .alertFirstButtonReturn else { return nil }
 
