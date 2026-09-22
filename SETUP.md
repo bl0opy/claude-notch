@@ -8,7 +8,7 @@ design and the full reference are in `README.md`.
 | Process | Port | Needs | What it does |
 |---|---|---|---|
 | agents daemon (`python -m agentsd`) | :8767 ws, :8766 tcp | nothing | lists every Claude Code session and holds every open permission question |
-| voice backend (`python -m backend.main`) | :8765 ws | `DEEPGRAM_API_KEY`, `claude` | mic, speech to text, voice agent, text to speech, spoken commands |
+| voice backend (`python -m backend.main`) | :8765 ws | `claude` | mic, speech to text, voice agent, text to speech, spoken commands |
 | notch app (`shell/NotchAgent`) | — | Accessibility | the notch, approval cards, hotkeys, push-to-talk |
 | global hook (`~/.claude/hooks/notch_hook.py`) | — | the daemon | sends every session's permission prompts to the daemon |
 
@@ -19,8 +19,7 @@ clicks and hotkeys, but nothing spoken.
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc]" websockets python-dotenv
-echo "DEEPGRAM_API_KEY=..." > .env    # the only required key; optional ones are in backend/config.py
+.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
 scripts/install-hooks.sh           # add the permission hook to ~/.claude/settings.json
 ```
 
@@ -102,7 +101,7 @@ Automated checks, no audio or API keys needed:
 | `run.sh`: port 8765 taken | A backend is still running. `lsof -iTCP:8765`, then kill it |
 | Hotkeys or push-to-talk do nothing | Accessibility permission for the launching app |
 | Swift build error mentioning "module cache path" | The repo moved. `run.sh` fixes it; by hand, `rm -rf shell/NotchAgent/.build` |
-| Nothing is spoken | Is the voice backend running, with `DEEPGRAM_API_KEY` in `.env`? |
+| Nothing is spoken | Is the voice backend running? First run downloads the Kokoro model (~350 MB). With `TTS_BACKEND=deepgram`, is `DEEPGRAM_API_KEY` set? |
 
 Daemon logs: the `./run.sh` output, or `~/Library/Logs/notch-agentsd.log` under launchd.
 
@@ -118,5 +117,5 @@ Daemon logs: the `./run.sh` output, or `~/Library/Logs/notch-agentsd.log` under 
 Not built yet.
 
 - **Always on, from login:** the daemon (launchd) and the notch app (as a Login Item, once packaged as a `.app`). Cheap: no mic, no API calls.
-- **Voice on demand:** the first right-⌥ hold starts the backend (about 2s the first time). It shuts down after about 15 minutes with no speech, which closes the mic, Deepgram and `claude -p`.
+- **Voice on demand:** the first right-⌥ hold starts the backend (about 2s the first time). It shuts down after about 15 minutes with no speech, which closes the mic, the speech models and `claude -p`.
 - **Daemon polling:** slows down when every session is idle.
