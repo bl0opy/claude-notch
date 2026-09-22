@@ -149,11 +149,18 @@ so what's shown is the fullest, turning amber once anything is past three
 quarters, which is the thing that predicts a compaction. A subscription isn't
 billed per token, so the dollars are a size for comparing sessions, not a bill.
 
-**+ agent** on the dashboard (or *New agent…* in the menu) picks a repo and
+**+ agent** on the dashboard (or *New agent…* in the menu) asks for a path and
 starts an agent there, owned by the notch — which is what makes it steerable and
 interruptible. The status dot count and the roster
 come from the agents daemon; if it isn't running the dashboard says so instead of
 showing nothing.
+
+The path starts filled in with `default_agent_path` from `settings.json`, and a
+bare name like `bus-tracker` is taken relative to it:
+
+```json
+{ "default_agent_path": "~/Documents/GitHub/Personal" }
+```
 
 ```bash
 .venv/bin/python -m agentsd --once   # print one snapshot and exit
@@ -256,7 +263,8 @@ roster keeps working rather than the daemon crashing.
 | `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
-| `shell/.../ProjectPicker.swift` | Directory picker behind `+ agent` |
+| `shell/.../PathPrompt.swift` | Path prompt behind `+ agent` |
+| `settings.json` | Notch settings — `default_agent_path` |
 | `shell/.../Jump.swift` | Brings a session's terminal to the front |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
 | `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |

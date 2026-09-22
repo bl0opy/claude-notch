@@ -130,7 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newAgent() {
-        guard let path = ProjectPicker.chooseDirectory(startingAt: state.sessionCwd) else { return }
+        guard let path = PathPrompt.ask() else { return }
         state.startAgent(in: path)
         state.show(.agents)
     }

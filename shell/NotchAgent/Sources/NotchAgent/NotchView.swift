@@ -272,7 +272,7 @@ struct NotchView: View {
     }
 
     private func newAgent() {
-        guard let path = ProjectPicker.chooseDirectory(startingAt: state.sessionCwd) else { return }
+        guard let path = PathPrompt.ask() else { return }
         state.startAgent(in: path)
         state.panel = .agents
         state.pinned = true
