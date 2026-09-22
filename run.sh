@@ -10,7 +10,6 @@ SHELL_DIR=shell/NotchAgent
 die() { echo "run.sh: $*" >&2; exit 1; }
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
-[ -f .env ] || die "no .env — copy .env.example to .env and fill in your keys"
 [ -x "$PY" ] || die "no .venv — pyenv local 3.11.6 && python -m venv .venv (see README)"
 command -v claude >/dev/null || die "claude isn't on PATH"
 listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
