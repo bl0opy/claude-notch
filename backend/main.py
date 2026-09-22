@@ -97,7 +97,7 @@ async def run():
     resolve_backends()
     missing = config.missing_keys()
     if missing:
-        logger.error(f"missing env vars: {', '.join(missing)} — copy .env.example to .env")
+        logger.error(f"missing env vars: {', '.join(missing)} — set them in .env, or use the local backends")
         return 1
 
     push_to_talk = config.push_to_talk or config.local_stt
