@@ -1,8 +1,7 @@
 """Speech to text, cloud or on-device.
 
-Deepgram Flux is the better transcriber and stays the default. The local path
-exists so the app can be installed and used with no API key at all, which is
-most of what stands between this and being handed to someone else.
+The local path is the default, so the app can be installed and used with no
+API key at all. Deepgram Flux is the better transcriber, one env var away.
 
 Push-to-talk is what makes a local model viable here. Flux earns its keep by
 deciding *when* a turn ended from the audio itself; with hold-to-talk the key
