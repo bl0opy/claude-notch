@@ -5,3 +5,9 @@ __pycache__/
 .DS_Store
 .build/
 shell/NotchAgent/.build/
+settings.json
+
+# development notes stay local
+*.md
+!README.md
+!SETUP.md

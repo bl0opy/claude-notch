@@ -155,7 +155,8 @@ interruptible. The status dot count and the roster
 come from the agents daemon; if it isn't running the dashboard says so instead of
 showing nothing.
 
-The path starts filled in with `default_agent_path` from `settings.json`, and a
+The path starts filled in with `default_agent_path` from `settings.json`
+(`run.sh` copies it from `settings.example.json` the first time), and a
 bare name like `bus-tracker` is taken relative to it:
 
 ```json
@@ -264,7 +265,7 @@ roster keeps working rather than the daemon crashing.
 | `shell/NotchAgent/` | SwiftUI app (SPM executable) |
 | `shell/.../PushToTalk.swift` | Global key watcher — right ⌥ opens the mic |
 | `shell/.../PathPrompt.swift` | Path prompt behind `+ agent` |
-| `settings.json` | Notch settings — `default_agent_path` |
+| `settings.example.json` | Notch settings template — copied to `settings.json` |
 | `shell/.../Jump.swift` | Brings a session's terminal to the front |
 | `scripts/mock_bridge.py` | Fake backend for developing the shell without API keys |
 | `scripts/mock_agents.py` | Fake roster on :8767, for building the agents list |

@@ -59,6 +59,7 @@ for _ in $(seq 1 50); do
   sleep 0.2
 done
 
+[ -f settings.json ] || cp settings.example.json settings.json
 NOTCH_SETTINGS="$PWD/settings.json" "$SHELL_DIR/.build/release/NotchAgent" &
 NOTCH=$!
 PIDS+=($NOTCH)
