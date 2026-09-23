@@ -44,6 +44,9 @@ Claude plan.
   starts the real interactive Claude Code there, in a pty the agents daemon
   owns, drawn in one window with every other session it hosts. Type to it
   there, talk to it through the notch, interrupt it from either.
+- **Keep an eye on the ones you aren't talking to.** A supervisor watches
+  every working agent, says how long turns are going, and tells you out loud
+  and in the notch when one looks stuck, and why.
 - **Stay out of the way.** The notch folds into the hardware notch when nothing
   is happening and opens by itself when something needs you.
 
@@ -288,6 +291,40 @@ Both are undocumented surfaces (`~/.claude/sessions/` and the peer socket),
 verified against Claude Code 2.1.273. When either changes, rows degrade to
 `unknown` and the roster keeps working rather than the daemon crashing.
 
+## A supervisor for the rest
+
+The agent you're focused on is a conversation. Every other working agent is
+watched by a supervisor in the agents daemon that reads its transcript and never
+touches it: no typing, no approvals, no interrupts.
+
+It says something in two cases, out loud and as a popup under the notch's pill
+(click it to open that agent):
+
+- **Progress**, on a long turn: after 3 minutes and every 5 after.
+  *"wound-stage, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring
+  the eval loop into the CLI."*
+- **Stuck**, the moment one looks it. Judged by rule, no model:
+
+  | Rule | When |
+  |---|---|
+  | failing | the same call has failed 3 times this turn |
+  | looping | the same call 4 times in its last 12, no edits between |
+  | hung | one call running 5 minutes (a dev server in the foreground, a prompt waiting on stdin) |
+  | silent | working, nothing written for 5 minutes |
+  | churning | the same file edited 8 times this turn |
+
+  The rule decides *that* it's stuck. *Why* comes from one short Haiku call
+  through your own `claude`: no tools, no settings, no MCP, no session saved, run
+  in an empty folder, with the agent's recent calls and errors as its only input.
+  No API key; it counts against your plan like any other call.
+  *"wound-stage looks stuck: it keeps rerunning the same test without fixing the
+  missing import it trips on."* With `SUPERVISOR_EXPLAIN=off` it says the rule's
+  own sentence instead.
+
+Each reason is said once per turn; a new prompt starts a clean slate. Nothing
+is said about the agent you're focused on, and nothing is spoken over you or
+over an answer.
+
 ## Every permission prompt, in one place
 
 `scripts/install-hooks.sh` adds one hook to `~/.claude/settings.json` (a copy of
@@ -473,6 +510,17 @@ The built-in mic hears the built-in speakers (3.5x room noise at moderate
 volume) and there's no echo canceller, which is why `MIC_GATE` is on by default.
 With push-to-talk the gate is redundant anyway.
 
+### Supervisor
+
+| Variable | Default | |
+|---|---|---|
+| `SUPERVISOR_EXPLAIN` | `claude` | `off` skips the Haiku call and says the rule's sentence |
+| `SUPERVISOR_DIGEST_AFTER_S` | `180` | First progress line on a long turn |
+| `SUPERVISOR_DIGEST_EVERY_S` | `300` | Then one this often |
+| `SUPERVISOR_HUNG_S` | `300` | One call running this long is stuck |
+| `SUPERVISOR_SILENT_S` | `300` | No transcript activity this long is stuck |
+| `SUPERVISOR_SPEAK_PROGRESS` | `1` | `0` shows progress in the notch without saying it |
+
 ### Ports and daemon
 
 | Variable | Default | |
@@ -494,6 +542,7 @@ Mock backends, so the shell can be worked on without a mic, models or agents:
 .venv/bin/python scripts/mock_bridge.py                     # fake voice backend on :8765
 .venv/bin/python scripts/mock_agents.py                     # fake roster and questions on :8767
 MOCK_SCENE=cycle .venv/bin/python scripts/mock_agents.py    # questions → working → idle every 40 s
+MOCK_SCENE=supervisor .venv/bin/python scripts/mock_agents.py  # the supervisor's popups
 ```
 
 The screenshots above are the real shell against these two.
@@ -510,6 +559,7 @@ Smoke tests, no audio or API keys needed:
 .venv/bin/python scripts/peer_smoke.py        # a foreign session can be messaged and heard
 .venv/bin/python scripts/tail_smoke.py        # a foreign agent's answer is what gets spoken
 .venv/bin/python scripts/window_smoke.py      # hosted ptys: typing, resize, replay, exit, origin check
+.venv/bin/python scripts/supervisor_smoke.py  # every stuck rule, progress lines, dedupe (--live asks Haiku why)
 ```
 
 The manual test checklist and troubleshooting table are in [SETUP.md](SETUP.md).
@@ -555,6 +605,8 @@ Agents daemon (`ws://127.0.0.1:8767`) → shell and backend:
                                   "project": "orbit", "tool": "Bash", "detail": "git push", "summary": "push to git",
                                   "risky": true, "canAlways": false, "created": 1789578000000}]}
 {"type": "fleet_event", "event": "done", "sessionId": "...", "project": "orbit", "long": true}
+{"type": "fleet_event", "event": "progress|stuck", "sessionId": "...", "project": "orbit", "line": "...",
+                        "reason": "failing|looping|hung|silent|churning", "level": "info|attention", "speak": true}
 {"type": "hosted",      "list": [{"id": "...", "cwd": "...", "pid": 123, "running": true, "exitCode": null, "startedAt": 1789578000000}]}
 {"type": "spawned",     "id": "...", "cwd": "..."}
 {"type": "typed",       "id": "...", "status": "sent|steered|waiting|gone"}
@@ -606,6 +658,7 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `agentsd/peer.py` | Talks to terminal sessions over their peer socket |
 | `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
 | `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
+| `agentsd/supervisor.py` | Watches unfocused agents: progress lines, stuck rules, the Haiku explainer |
 | `agentsd/pty_host.py` | Runs hosted sessions in ptys the daemon owns |
 | `agentsd/window.py` | Serves the terminal window's page and a socket per pty |
 | **`window/`** | **The terminal window's page (xterm.js vendored under `vendor/`)** |

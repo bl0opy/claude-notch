@@ -2,7 +2,8 @@
 import asyncio, json, os, random, time, websockets
 
 # MOCK_SCENE: "demo" (default) keeps questions up; "cycle" walks through
-# questions -> working -> all idle, to watch the island expand, shrink and fold.
+# questions -> working -> all idle, to watch the island expand, shrink and fold;
+# "supervisor" alternates the supervisor's progress and stuck popups every 12 s.
 SCENE = os.getenv("MOCK_SCENE", "demo")
 START = time.time()
 
@@ -84,6 +85,14 @@ async def listen(ws):
             await ws.send(json.dumps(approvals()))
 
 
+SUPERVISOR_LINES = [
+    {"event": "progress", "sessionId": "c3", "project": "wound-stage", "level": "info",
+     "line": "wound-stage, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring the eval loop into the CLI."},
+    {"event": "stuck", "sessionId": "c3", "project": "wound-stage", "level": "attention", "reason": "failing",
+     "line": "wound-stage looks stuck: it keeps rerunning the same test without fixing the missing import it trips on."},
+]
+
+
 async def handler(ws):
     print("client connected", flush=True)
     listener = asyncio.create_task(listen(ws))
@@ -95,6 +104,9 @@ async def handler(ws):
                 shown = approvals() if cycle_phase() == "questions" else {"type": "approvals", "list": []}
                 await ws.send(json.dumps(shown))
             await ws.send(json.dumps(snapshot(tick)))
+            if SCENE == "supervisor" and tick % 12 == 2:
+                event = SUPERVISOR_LINES[(tick // 12) % len(SUPERVISOR_LINES)]
+                await ws.send(json.dumps({"type": "fleet_event", "speak": True, **event}))
             tick += 1
             await asyncio.sleep(1)
     finally:
