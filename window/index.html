@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Notch Agents</title>
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <aside id="side">
+      <header id="fleet">
+        <div class="fleet-row">
+          <span class="label">spend</span><span id="fleet-cost" class="num">—</span>
+        </div>
+        <div class="fleet-row">
+          <span class="label">tokens</span><span id="fleet-tokens" class="num">—</span>
+        </div>
+        <div class="fleet-row">
+          <span class="label">fullest</span><span id="fleet-context" class="num">—</span>
+        </div>
+      </header>
+
+      <form id="spawn">
+        <input id="spawn-path" type="text" placeholder="~/path/to/repo" spellcheck="false" autocomplete="off" />
+        <button type="submit" title="start claude code there">+</button>
+      </form>
+
+      <section>
+        <h2>here</h2>
+        <ul id="hosted" class="list"></ul>
+      </section>
+      <section>
+        <h2>elsewhere</h2>
+        <ul id="elsewhere" class="list"></ul>
+      </section>
+
+      <footer id="conn"><span class="dot"></span><span id="conn-text">connecting</span></footer>
+    </aside>
+
+    <main id="main">
+      <header id="bar" hidden>
+        <div id="bar-title">
+          <span id="bar-dot" class="dot"></span>
+          <span id="bar-project"></span>
+          <span id="bar-branch" class="dim"></span>
+          <span id="bar-model" class="dim"></span>
+        </div>
+        <div id="bar-meter" title="context window">
+          <div class="meter"><div id="bar-fill"></div></div>
+          <span id="bar-context" class="num dim"></span>
+        </div>
+        <span id="bar-cost" class="num"></span>
+        <div id="bar-actions">
+          <button id="act-esc" title="interrupt the turn (esc)">esc</button>
+          <button id="act-stop" title="end the session">stop</button>
+          <button id="act-resume" title="claude --resume">resume</button>
+          <button id="act-forget" title="remove from the list">forget</button>
+        </div>
+      </header>
+      <div id="terms"></div>
+      <div id="empty">
+        <p>No session open.</p>
+        <p class="dim">Type a path on the left to start Claude Code there.</p>
+      </div>
+      <div id="toast" hidden></div>
+    </main>
+
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/addon-fit.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
