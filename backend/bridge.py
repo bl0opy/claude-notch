@@ -16,9 +16,12 @@ class NotchBridge:
     Shell -> backend:  interrupt | text | ptt | approve | say
     """
 
-    def __init__(self, host: str, port: int):
+    def __init__(self, host: str, port: int, origins: list[str | None] | None = None):
         self.host = host
         self.port = port
+        # A browser always sends an Origin, native clients never do — so by
+        # default no web page can reach this socket at all.
+        self.origins = origins or [None]
         self._clients: set[Any] = set()
         self._server = None
         self._handlers: dict[str, Handler] = {}
@@ -39,7 +42,9 @@ class NotchBridge:
         self._hello = hello
 
     async def start(self):
-        self._server = await websockets.serve(self._client_loop, self.host, self.port)
+        self._server = await websockets.serve(
+            self._client_loop, self.host, self.port, origins=self.origins
+        )
         logger.info(f"notch bridge listening on ws://{self.host}:{self.port}")
 
     async def stop(self):
