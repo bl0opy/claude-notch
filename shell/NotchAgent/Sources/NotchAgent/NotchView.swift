@@ -15,8 +15,7 @@ enum IslandMode: Equatable {
 struct NotchView: View {
     @ObservedObject var state: AgentState
     let geometry: NotchGeometry
-
-    @State private var leaving: Task<Void, Never>?
+    var onIslandFrame: (CGRect) -> Void = { _ in }
 
     private var mode: IslandMode {
         if state.expanded { return .expanded }
@@ -54,6 +53,7 @@ struct NotchView: View {
     var body: some View {
         island
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .onPreferenceChange(IslandFrameKey.self) { frame in onIslandFrame(frame) }
     }
 
     private var island: some View {
@@ -77,27 +77,18 @@ struct NotchView: View {
         .phaseAnimator([1.0, 1.05, 1.0], trigger: state.approvals.count) { view, scale in
             view.scaleEffect(scale, anchor: .top)
         } animation: { _ in .spring(response: 0.22, dampingFraction: 0.55) }
-        .onHover(perform: hover)
+        // Where the island is, for MouseTracker: hover and click-through
+        // are decided from the cursor, not by SwiftUI.
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(key: IslandFrameKey.self, value: proxy.frame(in: .global))
+            }
+        )
         .animation(morph, value: mode)
         .animation(.spring(response: 0.36, dampingFraction: 0.86), value: state.approvals.isEmpty)
         .animation(.easeOut(duration: 0.18), value: state.phase)
         .animation(.easeOut(duration: 0.12), value: state.micOpen)
         .animation(.easeOut(duration: 0.18), value: state.approvals)
-    }
-
-    /// Opens straight away, closes after a beat — skimming past the edge
-    /// shouldn't slam it shut.
-    private func hover(_ inside: Bool) {
-        leaving?.cancel()
-        if inside {
-            state.hovering = true
-            return
-        }
-        leaving = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(280))
-            guard !Task.isCancelled else { return }
-            state.hovering = false
-        }
     }
 
     /// The row that sits beside the hardware notch in every mode but dormant.
@@ -450,6 +441,11 @@ private struct RowAction: View {
         .buttonStyle(.plain)
         .help(help)
     }
+}
+
+struct IslandFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
 /// The supervisor's line, under the pill: which agent, then what's going on.

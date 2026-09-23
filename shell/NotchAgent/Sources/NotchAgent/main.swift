@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var client: BridgeClient!
     private var agentsClient: BridgeClient!
     private var hotKeyMonitor: Any?
+    private var mouse: MouseTracker?
     private let pushToTalk = PushToTalk()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -17,13 +18,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let geometry = NotchGeometry.current()
         let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
+        var tracker: MouseTracker?
         let window = NotchWindow(
             contentRect: frame,
-            rootView: NotchView(state: state, geometry: geometry)
+            rootView: NotchView(state: state, geometry: geometry) { tracker?.island = $0 }
         )
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         self.window = window
+        tracker = MouseTracker(window: window, state: state)
+        tracker?.install()
+        mouse = tracker
 
         client = BridgeClient()
         client.onMessage = { [weak self] message in self?.state.apply(message) }
@@ -67,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentsClient?.disconnect()
         if let monitor = hotKeyMonitor { NSEvent.removeMonitor(monitor) }
         pushToTalk.uninstall()
+        mouse?.uninstall()
     }
 
     private func installStatusItem() {

@@ -19,7 +19,8 @@ final class NotchWindow: NSPanel {
         hasShadow = false
         isMovable = false
         hidesOnDeactivate = false
-        ignoresMouseEvents = false
+        // MouseTracker turns this off only while the cursor is on the island.
+        ignoresMouseEvents = true
         contentView = NSHostingView(rootView: rootView)
     }
 
