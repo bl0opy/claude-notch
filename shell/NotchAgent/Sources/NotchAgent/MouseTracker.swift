@@ -13,11 +13,16 @@ import AppKit
 /// - hovering only starts with no button held — passing over with a drag in
 ///   progress never opens it;
 /// - leaving closes after a beat, so skimming past the edge doesn't slam it.
+///
+/// Global mouse-moved events don't reliably arrive while the cursor is over
+/// the menu bar, which is exactly where the notch is, so the cursor is also
+/// polled.
 @MainActor
 final class MouseTracker {
     private let window: NSWindow
     private let state: AgentState
     private var monitors: [Any] = []
+    private var poll: Timer?
     private var leaving: DispatchWorkItem?
     /// The island's frame in the window's SwiftUI space (top-left origin).
     var island: CGRect = .zero {
@@ -42,12 +47,17 @@ final class MouseTracker {
         }) {
             monitors.append(local)
         }
+        poll = Timer.scheduledTimer(withTimeInterval: 1.0 / 20, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.update() }
+        }
         update()
     }
 
     func uninstall() {
         monitors.forEach { NSEvent.removeMonitor($0) }
         monitors = []
+        poll?.invalidate()
+        poll = nil
     }
 
     private var islandOnScreen: CGRect {
@@ -63,8 +73,10 @@ final class MouseTracker {
     private func update() {
         let cursor = NSEvent.mouseLocation
         // The screen's top edge counts as inside: the cursor pinned against it
-        // above the notch is aiming for the notch.
-        let target = islandOnScreen.insetBy(dx: 0, dy: -2)
+        // above the notch is aiming for the notch. Folded, the island is only
+        // the hardware notch, so give it some slack either side.
+        let slack: CGFloat = state.dormant ? -24 : 0
+        let target = islandOnScreen.insetBy(dx: slack, dy: -2)
         let inside = !island.isEmpty && target.contains(cursor)
         window.ignoresMouseEvents = !inside
 
