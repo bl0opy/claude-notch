@@ -106,7 +106,7 @@ final class AgentState: ObservableObject {
     var expanded: Bool { hovering || micOpen }
 
     /// Folded into the hardware notch: nothing is working, waiting or talking,
-    /// and hasn't been for a few seconds. Hover the notch to bring it back.
+    /// and hasn't been for `Settings.foldAfter` seconds. Hover the notch to bring it back.
     @Published private(set) var dormant = false
     /// When the fleet last had something going on.
     @Published private(set) var lastBusy = Date()
@@ -129,7 +129,6 @@ final class AgentState: ObservableObject {
         return Date().timeIntervalSince(lastBusy) > Self.sleepAfter ? .asleep : .idle
     }
 
-    private static let foldAfter: TimeInterval = 8
     private static let sleepAfter: TimeInterval = 45
     private var clock: Timer?
 
@@ -144,7 +143,7 @@ final class AgentState: ObservableObject {
     func settle() {
         let now = Date()
         if busy { lastBusy = now }
-        let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Self.foldAfter
+        let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Settings.foldAfter
         if fold != dormant { dormant = fold }
     }
 

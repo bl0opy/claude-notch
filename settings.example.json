@@ -1,3 +1,4 @@
 {
-  "default_agent_path": "~/Documents/GitHub/Personal"
+  "default_agent_path": "~/Documents/GitHub/Personal",
+  "notch_fold_after": 300
 }

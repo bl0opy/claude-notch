@@ -197,8 +197,9 @@ the old always-on mic.
 
 ### The notch
 
-It behaves like a Dynamic Island. After 8 s with nothing working, waiting or
-talking, it folds into the hardware notch and disappears. Anything starting up
+It behaves like a Dynamic Island. After 5 minutes with nothing working, waiting or
+talking (`notch_fold_after` in `settings.json`), it folds into the hardware
+notch and disappears. Anything starting up
 brings it back as a small pill: status on the left, Claw'd on the right. Hover
 it (or the bare notch) and it springs open into the panel. It only stays open
 under the cursor or while the talk key is held; move away and it drops back to
@@ -455,8 +456,9 @@ installed, the backend falls back to Deepgram on its own.
 
 Two files, both optional and both gitignored:
 
-- **`settings.json`** — the notch shell's settings. Currently just
-  `default_agent_path`.
+- **`settings.json`** — the notch shell's settings: `default_agent_path`, and
+  `notch_fold_after`, the seconds of quiet before the pill folds into the
+  hardware notch (default 300; 0 keeps it up).
 - **`.env`** — the backend's and daemon's environment. Anything below can also
   be set in the shell environment instead.
 

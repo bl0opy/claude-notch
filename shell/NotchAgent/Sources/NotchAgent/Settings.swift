@@ -24,4 +24,10 @@ enum Settings {
     static var defaultAgentPath: String {
         (load()["default_agent_path"] as? String) ?? "~"
     }
+
+    /// Seconds of quiet before the pill folds into the notch. 0 keeps it up.
+    static var foldAfter: TimeInterval {
+        let seconds = (load()["notch_fold_after"] as? NSNumber)?.doubleValue ?? 300
+        return seconds <= 0 ? .infinity : seconds
+    }
 }
