@@ -70,10 +70,23 @@ final class AgentState: ObservableObject {
     /// Questions you've waved away for now. The panel stops opening for them,
     /// and opens again for the next new one.
     @Published var snoozed: Set<String> = []
-    @Published var hovering: Bool = false { didSet { settle() } }
+    @Published var hovering: Bool = false {
+        didSet {
+            // Moving over the lingering panel and away is how you dismiss it.
+            if oldValue && !hovering { lingering = false }
+            settle()
+        }
+    }
     /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
-    @Published var micOpen: Bool = false
+    @Published var micOpen: Bool = false {
+        didSet {
+            if oldValue && !micOpen {
+                lingering = true
+                quietSince = nil
+            }
+        }
+    }
     /// Every claude session on the machine, worst state first.
     @Published var agents: [RemoteAgent] = []
     /// The one that hears the mic and speaks. nil = the voice agent's own session.
@@ -101,9 +114,15 @@ final class AgentState: ObservableObject {
     }
 
     /// The panel is only ever open under the cursor, or while the talk key is
-    /// held. Work in progress shows as the pill instead, which is enough to see
+    /// held, and a little after. Work in progress shows as the pill instead, which is enough to see
     /// Claw'd without the panel covering what you're doing.
-    var expanded: Bool { hovering || micOpen }
+    var expanded: Bool { hovering || micOpen || lingering }
+
+    /// After the talk key comes up the panel stays open through the reply and
+    /// a few seconds past it, so you can read what it heard and what it said.
+    @Published private(set) var lingering = false
+    private var quietSince: Date?
+    private static let lingerAfterReply: TimeInterval = 6
 
     /// Folded into the hardware notch: nothing is working, waiting or talking,
     /// and hasn't been for `Settings.foldAfter` seconds. Hover the notch to bring it back.
@@ -145,6 +164,16 @@ final class AgentState: ObservableObject {
         if busy { lastBusy = now }
         let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Settings.foldAfter
         if fold != dormant { dormant = fold }
+
+        if lingering {
+            if micOpen || [.listening, .thinking, .speaking].contains(phase) {
+                quietSince = nil
+            } else if let quietSince, now.timeIntervalSince(quietSince) > Self.lingerAfterReply {
+                lingering = false
+            } else if quietSince == nil {
+                quietSince = now
+            }
+        }
     }
 
     var unseenApprovals: [ApprovalRequest] { approvals.filter { !snoozed.contains($0.id) } }

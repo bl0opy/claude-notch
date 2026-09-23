@@ -201,9 +201,9 @@ It behaves like a Dynamic Island. After 5 minutes with nothing working, waiting 
 talking (`notch_fold_after` in `settings.json`), it folds into the hardware
 notch and disappears. Anything starting up
 brings it back as a small pill: status on the left, Claw'd on the right. Hover
-it (or the bare notch) and it springs open into the panel. It only stays open
-under the cursor or while the talk key is held; move away and it drops back to
-the pill.
+it (or the bare notch) and it springs open into the panel. It stays open under
+the cursor, while the talk key is held, and after you talk until a few seconds
+past the reply, so you can read it; move over it and away to close it sooner.
 
 Claw'd shows the mood of the whole fleet: he hops while anything is working,
 paces while something waits on you, stands still and looks up while the mic is
