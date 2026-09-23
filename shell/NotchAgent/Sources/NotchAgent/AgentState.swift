@@ -39,6 +39,19 @@ struct ToolEvent: Identifiable {
     var status: Status = .running
 }
 
+/// A line from the supervisor about an agent you aren't focused on: how a long
+/// turn is going, or that it looks stuck. Shown in the notch for a few seconds.
+struct Notice: Identifiable, Equatable {
+    let id = UUID()
+    let sessionId: String
+    let project: String
+    let line: String
+    let attention: Bool
+
+    /// Long enough to read a sentence; a stuck agent stays up a little longer.
+    var lifetime: Duration { attention ? .seconds(14) : .seconds(9) }
+}
+
 /// The panel shows one thing at a time: the agent you're talking to, or all of them.
 enum PanelMode: String {
     case focus, agents
@@ -74,6 +87,9 @@ final class AgentState: ObservableObject {
     /// Whether the agents daemon is answering at all, which is a different thing
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
+    /// The supervisor's latest word, while it's showing.
+    @Published var notice: Notice?
+    private var noticeTimer: Task<Void, Never>?
 
     /// A foreign agent — one started in a terminal — can be talked to and
     /// approved, but not interrupted.
@@ -97,7 +113,7 @@ final class AgentState: ObservableObject {
 
     /// Anything that deserves the notch being visible.
     var busy: Bool {
-        if micOpen || !approvals.isEmpty { return true }
+        if micOpen || !approvals.isEmpty || notice != nil { return true }
         if [.thinking, .speaking, .waiting, .error].contains(phase) { return true }
         return agents.contains { $0.state == .working || $0.state == .waiting }
     }
@@ -195,6 +211,8 @@ final class AgentState: ObservableObject {
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
             fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
+        case "fleet_event":
+            post(message)
         case "spawned":
             // A session the agents daemon just started (or resumed): show it.
             if let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
@@ -212,6 +230,40 @@ final class AgentState: ObservableObject {
         default:
             break
         }
+    }
+
+    /// Supervisor lines about the agent you're talking to are noise: you can hear it.
+    private func post(_ message: [String: Any]) {
+        guard let event = message["event"] as? String, event == "progress" || event == "stuck",
+              let sessionId = message["sessionId"] as? String, sessionId != focused,
+              let line = message["line"] as? String, !line.isEmpty else { return }
+        // A progress line never covers a stuck one still being read.
+        if let current = notice, current.attention, event == "progress" { return }
+        let next = Notice(
+            sessionId: sessionId,
+            project: message["project"] as? String ?? "",
+            line: line,
+            attention: event == "stuck"
+        )
+        notice = next
+        noticeTimer?.cancel()
+        noticeTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: next.lifetime)
+            guard !Task.isCancelled, self?.notice?.id == next.id else { return }
+            self?.notice = nil
+            self?.settle()
+        }
+    }
+
+    func dismissNotice() {
+        noticeTimer?.cancel()
+        notice = nil
+    }
+
+    /// Go to the agent a notice is about: its terminal, or the terminal window.
+    func open(_ notice: Notice) {
+        dismissNotice()
+        if let agent = agents.first(where: { $0.id == notice.sessionId }) { jump(to: agent) }
     }
 
     func interrupt() { client?.send(["type": "interrupt"]) }

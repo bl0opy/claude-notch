@@ -6,6 +6,8 @@ enum IslandMode: Equatable {
     case dormant
     /// A live-activity pill: status on the left, Claw'd on the right.
     case compact
+    /// The pill with a line from the supervisor under it, for a few seconds.
+    case notice
     /// The full panel.
     case expanded
 }
@@ -18,6 +20,7 @@ struct NotchView: View {
 
     private var mode: IslandMode {
         if state.expanded { return .expanded }
+        if state.notice != nil { return .notice }
         return state.dormant ? .dormant : .compact
     }
 
@@ -27,6 +30,7 @@ struct NotchView: View {
         switch mode {
         case .dormant: return geometry.notchWidth
         case .compact: return geometry.notchWidth + (state.approvals.isEmpty ? 112 : 128)
+        case .notice: return 400
         case .expanded: return 480
         }
     }
@@ -35,6 +39,7 @@ struct NotchView: View {
         switch mode {
         case .dormant: return IslandShape(shoulder: 6, radius: 10)
         case .compact: return IslandShape(shoulder: 8, radius: 14)
+        case .notice: return IslandShape(shoulder: 10, radius: 20)
         case .expanded: return IslandShape(shoulder: 12, radius: 28)
         }
     }
@@ -57,6 +62,11 @@ struct NotchView: View {
             if mode == .expanded {
                 expanded
                     .transition(.island)
+            } else if mode == .notice, let notice = state.notice {
+                NoticeLine(notice: notice)
+                    .transition(.island)
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.open(notice) }
             }
         }
         .frame(width: width, alignment: .top)
@@ -439,6 +449,45 @@ private struct RowAction: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+/// The supervisor's line, under the pill: which agent, then what's going on.
+private struct NoticeLine: View {
+    let notice: Notice
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle()
+                .fill(notice.attention ? AgentPhase.waiting.tint : Color(white: 0.45))
+                .frame(width: 6, height: 6)
+                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(notice.project.uppercased())
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .tracking(0.8)
+                    .foregroundStyle(Color(white: 0.5))
+                Text(body(of: notice))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(white: 0.9))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 4)
+        .padding(.bottom, 14)
+        .frame(width: 400, alignment: .leading)
+    }
+
+    /// The project is already the label, so the line drops its own "<project> …" opener.
+    private func body(of notice: Notice) -> String {
+        guard !notice.project.isEmpty,
+              let prefix = [notice.project + ", ", notice.project + " "].first(where: notice.line.hasPrefix)
+        else { return notice.line }
+        let rest = String(notice.line.dropFirst(prefix.count))
+        return rest.prefix(1).uppercased() + rest.dropFirst()
     }
 }
 
