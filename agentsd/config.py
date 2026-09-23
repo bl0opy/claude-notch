@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 class Config:
     ws_host: str = field(default_factory=lambda: os.getenv("AGENTS_WS_HOST", "127.0.0.1"))
     ws_port: int = field(default_factory=lambda: int(os.getenv("AGENTS_WS_PORT", "8767")))
+    window_port: int = field(default_factory=lambda: int(os.getenv("AGENTS_WINDOW_PORT", "8768")))
     inbox_port: int = field(default_factory=lambda: int(os.getenv("NOTCH_INBOX_PORT", "8766")))
     # An owned agent's question with nobody answering is a deny after this. A
     # terminal one just stops showing in the notch; its own dialog is still up.

@@ -70,11 +70,12 @@ def project_name(cwd: str) -> str:
     return _toplevel[cwd]
 
 
-def _row(session: LiveSession, transcripts: Transcripts, owned: set[str]) -> dict:
+def _row(session: LiveSession, transcripts: Transcripts, owned: set[str], hosted: set[str]) -> dict:
     rollup = transcripts.rollup(session.cwd, session.session_id).as_dict()
     if not config.send_details:
         rollup["activityDetail"] = ""
-    tty, host = host_of(session.pid)
+    # A session the daemon runs in its own pty is shown in the terminal window.
+    tty, host = ("", "window") if session.session_id in hosted else host_of(session.pid)
     return {
         "id": session.session_id,
         "tty": tty,
@@ -121,10 +122,11 @@ def fleet_totals(rows: list[dict]) -> dict:
     }
 
 
-def build(transcripts: Transcripts, owned: set[str] | None = None) -> dict:
+def build(transcripts: Transcripts, owned: set[str] | None = None, hosted: set[str] | None = None) -> dict:
     sessions, degraded = live_sessions()
-    owned = owned or set()
-    rows = [_row(s, transcripts, owned) for s in sessions]
+    hosted = hosted or set()
+    owned = (owned or set()) | hosted
+    rows = [_row(s, transcripts, owned, hosted) for s in sessions]
     version = next((s.version for s in sessions if s.version), "")
     return {
         "type": "agents",
