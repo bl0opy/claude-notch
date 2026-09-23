@@ -71,9 +71,6 @@ final class AgentState: ObservableObject {
     @Published var ownedIds: Set<String> = []
     /// Which half of the panel is showing.
     @Published var panel: PanelMode = .focus
-    /// Held open regardless of the cursor — click the notch to pin it, which is
-    /// what makes the dashboard usable while you work somewhere else.
-    @Published var pinned: Bool = false { didSet { settle() } }
     /// Whether the agents daemon is answering at all, which is a different thing
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
@@ -87,9 +84,10 @@ final class AgentState: ObservableObject {
         return agent.owned
     }
 
-    /// The panel opens on hover, and on its own while Claude is working so the
-    /// activity feed is visible without having to park the cursor up there.
-    var expanded: Bool { hovering || pinned || micOpen || phase == .thinking || !unseenApprovals.isEmpty }
+    /// The panel is only ever open under the cursor, or while the talk key is
+    /// held. Work in progress shows as the pill instead, which is enough to see
+    /// Claw'd without the panel covering what you're doing.
+    var expanded: Bool { hovering || micOpen }
 
     /// Folded into the hardware notch: nothing is working, waiting or talking,
     /// and hasn't been for a few seconds. Hover the notch to bring it back.
@@ -130,7 +128,7 @@ final class AgentState: ObservableObject {
     func settle() {
         let now = Date()
         if busy { lastBusy = now }
-        let fold = !busy && !hovering && !pinned && now.timeIntervalSince(lastBusy) > Self.foldAfter
+        let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Self.foldAfter
         if fold != dormant { dormant = fold }
     }
 
@@ -229,7 +227,6 @@ final class AgentState: ObservableObject {
 
     func show(_ mode: PanelMode) {
         panel = mode
-        pinned = true
     }
 
     /// Start a new agent in a directory of your choosing, owned by the notch.

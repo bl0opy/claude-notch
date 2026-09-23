@@ -116,10 +116,6 @@ struct NotchView: View {
             }
         }
         .frame(height: stripHeight)
-        // Click the notch to pin the panel open — hovering is fine for a glance,
-        // useless for reading a dashboard while you work somewhere else.
-        .contentShape(Rectangle())
-        .onTapGesture { state.pinned.toggle() }
     }
 
     private var expanded: some View {
@@ -157,14 +153,6 @@ struct NotchView: View {
                 on: state.panel == .agents
             ) { state.panel = .agents }
             Spacer()
-            if state.pinned {
-                Button(action: { state.pinned = false }) {
-                    Text("unpin")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(Color(white: 0.45))
-                }
-                .buttonStyle(.plain)
-            }
         }
     }
 
@@ -275,7 +263,6 @@ struct NotchView: View {
         guard let path = PathPrompt.ask() else { return }
         state.startAgent(in: path)
         state.panel = .agents
-        state.pinned = true
     }
 }
 
