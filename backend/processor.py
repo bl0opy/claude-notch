@@ -176,6 +176,9 @@ class ClaudeCodeProcessor(FrameProcessor):
                 self._dropping = False
             elif status == "queued":
                 await self._speak_now("It's mid-turn — I'll pass that on when it's free.")
+            elif status == "waiting":
+                self._pending_turns = max(0, self._pending_turns - 1)
+                await self._speak_now("It's waiting on a permission question — answer that first.")
             elif status == "gone":
                 self._pending_turns = max(0, self._pending_turns - 1)
                 await self._speak_now("That agent isn't running any more.")

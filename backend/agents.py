@@ -1,7 +1,9 @@
 """Who's running, who has the mic, and where a spoken turn goes.
 
-The notch drives sessions it started and can also talk to sessions it didn't:
-those it reaches over the peer socket and reads back from their transcript. Only
+The notch drives its own voice session, types into the sessions the agents
+daemon hosts in its ptys, and can also talk to sessions it didn't start: those
+it reaches over the peer socket. Everything but its own is heard back from
+the transcript. Only
 the focused agent is ever heard. What the rest are waiting on, or have finished,
 comes from the agents daemon instead (backend/fleet.py).
 """
@@ -38,12 +40,14 @@ class Owned:
 class AgentDirector:
     """One focus, many agents."""
 
-    def __init__(self, primary: ClaudeCodeSession, watch_interval_s: float = 1.0):
+    def __init__(self, primary: ClaudeCodeSession, fleet=None, watch_interval_s: float = 1.0):
         # Told whenever the set of agents the notch started changes — only those
         # can be interrupted or approved here, and the shell has to know which.
         self.on_owned_change = None
         self._owned: dict[str, Owned] = {}
         self._primary = primary
+        # Sessions the agents daemon hosts in its ptys are typed into through it.
+        self._fleet = fleet
         self._events: asyncio.Queue[Event] = asyncio.Queue()
         self._messenger = Messenger()
         self._watch_interval = watch_interval_s
@@ -77,18 +81,6 @@ class AgentDirector:
         holder.pump = asyncio.create_task(self._pump(holder))
         self._announce_owned()
         return holder
-
-    async def start_agent(self, cwd: str) -> None:
-        """A new agent in another repo, owned by the notch, mic and all."""
-        session = ClaudeCodeSession(
-            cwd=cwd,
-            model=self._primary.model,
-            permission_mode=self._primary.permission_mode,
-            system_prompt=self._primary.system_prompt,
-            settings=self._primary.settings,
-        )
-        holder = await self._start_owned(session)
-        logger.info(f"started an owned agent in {cwd} ({holder.id})")
 
     # ---- events ----------------------------------------------------------
 
@@ -172,6 +164,8 @@ class AgentDirector:
                 steered = True
             await session.send_user_text(text)
             return "steered" if steered else "sent"
+        if self._fleet and self._fleet.hosted(self.focused or ""):
+            return await self._fleet.type(self.focused, text, steer=True)
         row = self._live(self.focused or "")
         if not row:
             return "gone"
@@ -180,15 +174,19 @@ class AgentDirector:
         return receipt.status
 
     async def interrupt(self) -> bool:
-        """Only an agent we started can be cut off mid-turn."""
+        """Only an agent we started, or one in the daemon's pty, can be cut off."""
         session = self.focused_session
         if not session:
+            if self._fleet and self._fleet.hosted(self.focused or ""):
+                return await self._fleet.interrupt(self.focused)
             return False
         await session.interrupt()
         return True
 
     async def interrupt_agent(self, agent_id: str) -> bool:
         """Cut off one agent by id, focused or not — again, only one we started."""
+        if self._fleet and self._fleet.hosted(agent_id):
+            return await self._fleet.interrupt(agent_id)
         holder = self._holder(agent_id) or next(
             (o for o in self._owned.values() if o.session.proc and self._pid_of(agent_id) == o.session.proc.pid),
             None,

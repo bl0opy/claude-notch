@@ -23,6 +23,8 @@ class Fleet:
         self._ws = None
         self._task: asyncio.Task | None = None
         self._seen: set[str] = set()
+        # session id -> waiter for the daemon's word on a line typed into it.
+        self._typing: dict[str, asyncio.Future] = {}
         self.on_new_approval: Listener | None = None
         self.on_event: Listener | None = None
 
@@ -44,6 +46,35 @@ class Fleet:
             return False
         self.approvals = [a for a in self.approvals if a["id"] != req_id]
         return True
+
+    async def _send(self, msg: dict) -> bool:
+        if not self._ws:
+            return False
+        try:
+            await self._ws.send(json.dumps(msg))
+        except websockets.ConnectionClosed:
+            return False
+        return True
+
+    def hosted(self, session_id: str) -> bool:
+        """Runs in the daemon's own pty, so it can be typed into and interrupted."""
+        return any(a["id"] == session_id and a.get("host") == "window" for a in self.agents)
+
+    async def type(self, session_id: str, text: str, steer: bool = True) -> str:
+        """sent | steered | waiting | gone — or unknown if the daemon never said."""
+        waiter = asyncio.get_running_loop().create_future()
+        self._typing[session_id] = waiter
+        try:
+            if not await self._send({"type": "type", "id": session_id, "text": text, "steer": steer}):
+                return "gone"
+            return await asyncio.wait_for(waiter, timeout=5)
+        except asyncio.TimeoutError:
+            return "unknown"
+        finally:
+            self._typing.pop(session_id, None)
+
+    async def interrupt(self, session_id: str) -> bool:
+        return await self._send({"type": "interrupt", "id": session_id})
 
     def approval(self, req_id: str) -> dict | None:
         return next((a for a in self.approvals if a["id"] == req_id), None)
@@ -80,5 +111,9 @@ class Fleet:
             if self.on_new_approval:
                 for request in fresh:
                     await self.on_new_approval(request)
+        elif kind == "typed":
+            waiter = self._typing.get(msg.get("id", ""))
+            if waiter and not waiter.done():
+                waiter.set_result(msg.get("status") or "unknown")
         elif kind == "fleet_event" and self.on_event:
             await self.on_event(msg)

@@ -157,8 +157,8 @@ async def run():
     )
     stt = build_stt()
     tts = build_tts()
-    director = AgentDirector(session)
     fleet = Fleet(config.agents_url)
+    director = AgentDirector(session, fleet)
 
     def announce_owned(ids: list[str]):
         asyncio.create_task(bridge.send({"type": "owned", "ids": ids}))
@@ -228,16 +228,6 @@ async def run():
             return
         await brain.focus(session_id)
 
-    async def on_start_agent(msg):
-        cwd = (msg.get("cwd") or "").strip()
-        if not cwd:
-            return
-        try:
-            await director.start_agent(cwd)
-        except Exception as e:
-            logger.error(f"could not start an agent in {cwd}: {e}")
-            await bridge.send({"type": "error", "message": f"could not start an agent: {e}"})
-
     async def on_hello(_msg):
         """A shell that just connected doesn't know any of this yet."""
         await bridge.send({"type": "owned", "ids": director.owned_ids()})
@@ -260,7 +250,6 @@ async def run():
     bridge.on("interrupt", on_interrupt)
     bridge.on("ptt", on_ptt)
     bridge.on("focus", on_focus)
-    bridge.on("start_agent", on_start_agent)
     bridge.on("text", on_text)
     bridge.on("say", on_say)
     bridge.on("hello", on_hello)
