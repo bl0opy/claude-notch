@@ -445,7 +445,12 @@ private struct RowAction: View {
 
 struct IslandFrameKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
-    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+    /// Views that don't report the frame still take part with `.zero`, so
+    /// those mustn't overwrite the one that does.
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if !next.isEmpty { value = next }
+    }
 }
 
 /// The supervisor's line, under the pill: which agent, then what's going on.

@@ -18,16 +18,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let geometry = NotchGeometry.current()
         let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
-        var tracker: MouseTracker?
+        // Made before the window: the view reports the island's frame during
+        // the window's first layout, and that report must land somewhere.
+        let tracker = MouseTracker(state: state)
         let window = NotchWindow(
             contentRect: frame,
-            rootView: NotchView(state: state, geometry: geometry) { tracker?.island = $0 }
+            rootView: NotchView(state: state, geometry: geometry) { tracker.island = $0 }
         )
         window.setFrame(frame, display: true)
         window.orderFrontRegardless()
         self.window = window
-        tracker = MouseTracker(window: window, state: state)
-        tracker?.install()
+        tracker.install(on: window)
         mouse = tracker
 
         client = BridgeClient()

@@ -19,7 +19,7 @@ import AppKit
 /// polled.
 @MainActor
 final class MouseTracker {
-    private let window: NSWindow
+    private weak var window: NSWindow?
     private let state: AgentState
     private var monitors: [Any] = []
     private var poll: Timer?
@@ -29,12 +29,12 @@ final class MouseTracker {
         didSet { update() }
     }
 
-    init(window: NSWindow, state: AgentState) {
-        self.window = window
+    init(state: AgentState) {
         self.state = state
     }
 
-    func install() {
+    func install(on window: NSWindow) {
+        self.window = window
         let mask: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .leftMouseUp, .rightMouseUp]
         if let global = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] _ in
             Task { @MainActor in self?.update() }
@@ -60,7 +60,7 @@ final class MouseTracker {
         poll = nil
     }
 
-    private var islandOnScreen: CGRect {
+    private func islandOnScreen(in window: NSWindow) -> CGRect {
         let frame = window.frame
         return CGRect(
             x: frame.minX + island.minX,
@@ -71,12 +71,13 @@ final class MouseTracker {
     }
 
     private func update() {
+        guard let window else { return }
         let cursor = NSEvent.mouseLocation
         // The screen's top edge counts as inside: the cursor pinned against it
         // above the notch is aiming for the notch. Folded, the island is only
         // the hardware notch, so give it some slack either side.
         let slack: CGFloat = state.dormant ? -24 : 0
-        let target = islandOnScreen.insetBy(dx: slack, dy: -2)
+        let target = islandOnScreen(in: window).insetBy(dx: slack, dy: -2)
         let inside = !island.isEmpty && target.contains(cursor)
         window.ignoresMouseEvents = !inside
 
