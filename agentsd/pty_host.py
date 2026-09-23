@@ -42,6 +42,29 @@ ESC = "\x1b"
 
 Listener = Callable[[dict], None]
 
+# What a running Claude Code session sets for the processes under it. Started
+# from inside one (a daemon launched from a Claude Code shell, say), a new
+# session would take itself for that one's child: no transcript, no registry
+# entry, someone else's messaging socket.
+INHERITED = {
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_SESSION_ID",
+}
+
+
+def session_env(**extra: str) -> dict[str, str]:
+    """The environment for a new top-level Claude Code session."""
+    env = {k: v for k, v in os.environ.items() if k not in INHERITED}
+    return {**env, **extra}
+
 
 def _set_ctty():
     # Runs in the child after setsid: make the pty its controlling terminal,
@@ -169,7 +192,7 @@ class PtyHost:
         argv = self._command() + flags
         master, slave = os.openpty()
         _winsize(master, hosted.cols, hosted.rows)
-        env = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+        env = session_env(TERM="xterm-256color", COLORTERM="truecolor")
         try:
             proc = subprocess.Popen(
                 argv,

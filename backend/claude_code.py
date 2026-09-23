@@ -1,10 +1,11 @@
 import asyncio
 import json
-import os
 import uuid
 from typing import Any, AsyncIterator
 
 from loguru import logger
+
+from agentsd.pty_host import session_env
 
 
 def _result_text(content: Any) -> str:
@@ -78,7 +79,7 @@ class ClaudeCodeSession:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, "CLAUDE_CODE_ENTRYPOINT": "voice-agent"},
+            env=session_env(CLAUDE_CODE_ENTRYPOINT="voice-agent"),
         )
         self._reader_task = asyncio.create_task(self._read_stdout())
         self._stderr_task = asyncio.create_task(self._read_stderr())
