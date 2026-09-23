@@ -40,8 +40,10 @@ Claude plan.
   not: project, branch, what it's doing, tokens spent, worst state first.
 - **Answer every permission prompt from one place.** Click, press ⌃⌥Y, or say
   "approve orbit". The terminal's own dialog closes when you do.
-- **Start agents anywhere.** `+ agent` takes a path and starts a session there,
-  owned by the notch, so you can talk to it and interrupt it.
+- **Start agents anywhere, no terminal windows.** `+ agent` takes a path and
+  starts the real interactive Claude Code there, in a pty the agents daemon
+  owns, drawn in one window with every other session it hosts. Type to it
+  there, talk to it through the notch, interrupt it from either.
 - **Stay out of the way.** The notch folds into the hardware notch when nothing
   is happening and opens by itself when something needs you.
 
@@ -53,7 +55,8 @@ flowchart LR
         direction LR
         shell["<b>Notch shell</b><br/>SwiftUI<br/>push-to-talk, panel, hotkeys"]
         backend["<b>Voice backend</b><br/>Python · pipecat<br/>parakeet STT → claude -p → kokoro TTS"]
-        agentsd["<b>Agents daemon</b><br/>Python<br/>roster, approval inbox"]
+        agentsd["<b>Agents daemon</b><br/>Python<br/>roster, approval inbox, hosted ptys"]
+        window["<b>Terminal window</b><br/>xterm.js<br/>every hosted session"]
         hook["<b>notch_hook.py</b><br/>in every session"]
         sessions["<b>Claude Code sessions</b><br/>terminals, editors"]
     end
@@ -61,6 +64,7 @@ flowchart LR
     shell <-- "ws :8765<br/>turns, state, transcript" --> backend
     shell <-- "ws :8767<br/>roster, approvals" --> agentsd
     backend <-- "ws :8767" --> agentsd
+    window <-- "http + ws :8768<br/>pty bytes" --> agentsd
     hook -- "tcp :8766<br/>one question, one answer" --> agentsd
     sessions -. "~/.claude/sessions<br/>peer sockets" .-> agentsd
     sessions --- hook
@@ -73,7 +77,7 @@ others with it:
 |---|---|---|---|
 | **Notch shell** (`shell/NotchAgent`) | — | Accessibility | The notch panel, approval cards, hotkeys, push-to-talk |
 | **Voice backend** (`python -m backend.main`) | ws :8765 | `claude` on PATH | Mic, speech to text, the voice agent, text to speech, spoken commands |
-| **Agents daemon** (`python -m agentsd`) | ws :8767, tcp :8766 | nothing | Lists every Claude Code session, holds every open permission question |
+| **Agents daemon** (`python -m agentsd`) | ws :8767, tcp :8766, http :8768 | `claude` on PATH | Lists every Claude Code session, holds every open permission question, runs hosted sessions in its ptys and serves the terminal window |
 
 The daemon and the shell work without the voice backend: you still get cards,
 clicks and hotkeys, just nothing spoken.
@@ -193,8 +197,9 @@ the old always-on mic.
 It behaves like a Dynamic Island. After 8 s with nothing working, waiting or
 talking, it folds into the hardware notch and disappears. Anything starting up
 brings it back as a small pill: status on the left, Claw'd on the right. Hover
-it (or the bare notch) and it springs open into the panel; a new permission
-question opens it by itself. Click to pin it open.
+it (or the bare notch) and it springs open into the panel. It only stays open
+under the cursor or while the talk key is held; move away and it drops back to
+the pill.
 
 Claw'd shows the mood of the whole fleet: he hops while anything is working,
 paces while something waits on you, stands still and looks up while the mic is
@@ -211,8 +216,8 @@ sits at the top.
 Click a row to focus it. The focused agent is the one that hears the mic and the
 only one that speaks; everything else works silently and gets a one-line
 interjection when it asks for something or finishes a long turn. Hover a row for
-**↗** (bring its terminal forward) and **■** (stop it, for agents the notch
-started).
+**↗** (bring its terminal forward, or open it in the terminal window if the
+daemon hosts it) and **■** (interrupt it, for hosted agents and the notch's own).
 
 Above the roster is one line for the whole machine: how many sessions, tokens
 spent between them, what that would cost at API rates, and which context window
@@ -224,8 +229,9 @@ for comparing sessions, not a bill.
 ### Starting an agent
 
 **+ agent** on the dashboard (or *New agent…* in the menu bar item) asks for a
-path and starts an agent there, owned by the notch, which is what makes it
-steerable and interruptible.
+path and has the agents daemon start `claude` there in a pty of its own. The
+terminal window opens on it: the full Claude Code interface, typed into as
+usual, with no Terminal.app window behind it.
 
 <p align="center">
   <img src="docs/path-prompt.png" width="412" alt="The Start agent prompt, filled in with the default path">
@@ -243,14 +249,34 @@ path that isn't a directory keeps the prompt open and says so.
 `settings.example.json` the first time. It's read each time you open the prompt,
 so edits apply without a restart.
 
-### Owned agents and terminal agents
+### The terminal window
 
-| | Started by the notch | Started in a terminal |
-|---|---|---|
-| Listed, with live state and tokens | yes | yes |
-| Focus it, talk to it, hear it back | yes | yes |
-| Interrupt | yes | no — `stop` reads `can't stop` |
-| Approve or deny from the notch, by voice or key | yes | yes, with `install-hooks.sh` |
+*Terminal window* in the menu bar item, or ↗ on a hosted row, opens it: a list
+of hosted sessions on the left with each one's spend and context, the machine's
+totals above, and the selected session's terminal on the right. The page is
+served by the daemon on `http://127.0.0.1:8768` and works in a browser too.
+
+The sessions belong to the daemon, not the window: closing the window leaves
+them running. Each is started with a known session id, so after the daemon
+restarts they're still listed and **resume** brings one back with
+`claude --resume`. Under launchd (`install-agentsd.sh`) they outlive `run.sh`.
+
+A spoken turn for a hosted session is typed into its prompt; talking over it
+mid-turn presses Esc first, the way you would. While it's showing a permission
+dialog nothing is typed, since the keys would answer it.
+
+A pty socket is a keyboard on a live session, so the daemon refuses any browser
+page but its own (an `Origin` check on every socket).
+
+### Hosted, owned and terminal agents
+
+| | Hosted by the daemon | The voice agent | Started in a terminal |
+|---|---|---|---|
+| Listed, with live state and tokens | yes | yes | yes |
+| Focus it, talk to it, hear it back | yes | yes | yes |
+| Type to it directly | the terminal window | — | its terminal |
+| Interrupt | yes | yes | no — `stop` reads `can't stop` |
+| Approve or deny from the notch, by voice or key | yes, with `install-hooks.sh` | yes | yes, with `install-hooks.sh` |
 
 Talking to a terminal session goes over the peer socket Claude Code already
 serves (`/tmp/cc-socks/<pid>.sock`, authenticated with that session's own key
@@ -455,6 +481,7 @@ With push-to-talk the gate is redundant anyway.
 | `AGENTS_URL` | `ws://127.0.0.1:8767` | Where the backend finds the daemon |
 | `AGENTS_WS_PORT` | `8767` | Daemon ↔ shell and backend |
 | `NOTCH_INBOX_PORT` | `8766` | Hook → daemon |
+| `AGENTS_WINDOW_PORT` | `8768` | The terminal window's page and pty sockets |
 | `AGENTS_TICK_S` | `1.0` | Roster refresh |
 | `AGENTS_SEND_DETAILS` | `1` | `0` keeps prompt text and tool arguments off the socket |
 | `NOTCH_TERMINAL_WAIT_S` | `590` | How long a terminal session's question stays in the notch |
@@ -482,6 +509,7 @@ Smoke tests, no audio or API keys needed:
 .venv/bin/python scripts/director_smoke.py    # focus routing, owned and foreign
 .venv/bin/python scripts/peer_smoke.py        # a foreign session can be messaged and heard
 .venv/bin/python scripts/tail_smoke.py        # a foreign agent's answer is what gets spoken
+.venv/bin/python scripts/window_smoke.py      # hosted ptys: typing, resize, replay, exit, origin check
 ```
 
 The manual test checklist and troubleshooting table are in [SETUP.md](SETUP.md).
@@ -513,7 +541,6 @@ Shell → backend:
 {"type": "say",         "text": "speak this verbatim"}
 {"type": "ptt",         "down": true}
 {"type": "focus",       "id": "<session id>"}
-{"type": "start_agent", "cwd": "/path/to/a/repo"}
 {"type": "hello"}
 ```
 
@@ -528,13 +555,27 @@ Agents daemon (`ws://127.0.0.1:8767`) → shell and backend:
                                   "project": "orbit", "tool": "Bash", "detail": "git push", "summary": "push to git",
                                   "risky": true, "canAlways": false, "created": 1789578000000}]}
 {"type": "fleet_event", "event": "done", "sessionId": "...", "project": "orbit", "long": true}
+{"type": "hosted",      "list": [{"id": "...", "cwd": "...", "pid": 123, "running": true, "exitCode": null, "startedAt": 1789578000000}]}
+{"type": "spawned",     "id": "...", "cwd": "..."}
+{"type": "typed",       "id": "...", "status": "sent|steered|waiting|gone"}
+{"type": "error",       "message": "..."}
 ```
 
-Shell or backend → agents daemon:
+Shell, backend or window → agents daemon:
 
 ```json
-{"type": "approve", "id": "...", "approved": true, "always": false, "how": "from the notch"}
+{"type": "approve",   "id": "...", "approved": true, "always": false, "how": "from the notch"}
+{"type": "spawn",     "cwd": "/path/to/a/repo"}
+{"type": "resume",    "id": "<hosted session id>"}
+{"type": "type",      "id": "...", "text": "a line for its prompt", "steer": true}
+{"type": "interrupt", "id": "..."}
+{"type": "stop",      "id": "..."}
+{"type": "forget",    "id": "..."}
 ```
+
+The terminal window's page opens `ws://127.0.0.1:8768/pty/<id>` per session:
+`{"type": "replay|out", "data": "..."}` and `{"type": "exit", "code": 0}` come
+back, `{"type": "in", "data": "..."}` and `{"type": "resize", "cols", "rows"}` go in.
 
 The hook talks to the daemon on `127.0.0.1:8766`: one JSON line describing the
 call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissions": [...]}`.
@@ -565,6 +606,9 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `agentsd/peer.py` | Talks to terminal sessions over their peer socket |
 | `agentsd/risk.py` | What a tool call is in words, and which ones are destructive |
 | `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
+| `agentsd/pty_host.py` | Runs hosted sessions in ptys the daemon owns |
+| `agentsd/window.py` | Serves the terminal window's page and a socket per pty |
+| **`window/`** | **The terminal window's page (xterm.js vendored under `vendor/`)** |
 | **`hooks/`** | |
 | `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
 | **`shell/NotchAgent/`** | **SwiftUI app (SPM executable)** |
@@ -573,6 +617,7 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `.../PathPrompt.swift` | The path prompt behind `+ agent` |
 | `.../Settings.swift` | Reads `settings.json` |
 | `.../Jump.swift` | Brings a session's terminal to the front |
+| `.../TerminalWindow.swift` | Native window around the terminal page |
 | **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
 | `service/` | launchd plist for the agents daemon |
 
