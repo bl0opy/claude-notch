@@ -235,13 +235,16 @@ class ClaudeCodeProcessor(FrameProcessor):
         self._alert("ask", f"{project} wants to {request.get('summary') or 'do something'}.", request["id"])
 
     async def on_fleet_event(self, event: dict):
-        # A long turn finishing somewhere you aren't looking is news; the one
-        # you're talking to, or a quick one, isn't.
-        if event.get("event") != "done" or not event.get("long"):
-            return
+        # News from agents you aren't talking to: a long turn finishing, the
+        # supervisor's progress lines, and one looking stuck. The agent you're
+        # focused on you can already hear.
         if event.get("sessionId") == self._director.focused:
             return
-        self._alert("done", event.get("project") or "An agent", "")
+        kind = event.get("event")
+        if kind == "done" and event.get("long"):
+            self._alert("done", event.get("project") or "An agent", "")
+        elif kind == "stuck" or (kind == "progress" and event.get("speak")):
+            self._alert(kind, event.get("line") or "", "")
 
     def _alert(self, kind: str, text: str, approval_id: str):
         self._alerts.append((kind, text, approval_id))
@@ -272,7 +275,11 @@ class ClaudeCodeProcessor(FrameProcessor):
         # A question already answered — in the notch, or its terminal — goes unsaid.
         asks = [a for a in alerts if a[0] == "ask" and self._fleet and self._fleet.approval(a[2])]
         done = list(dict.fromkeys(text for kind, text, _ in alerts if kind == "done"))
-        parts = []
+        stuck = list(dict.fromkeys(text for kind, text, _ in alerts if kind == "stuck"))
+        progress = [text for kind, text, _ in alerts if kind == "progress"]
+        # Stuck comes first and in full; progress only when nothing louder is
+        # queued, and only the newest — it's a status, not a backlog.
+        parts = stuck[:2]
         if len(asks) == 1:
             parts.append(asks[0][1])
         elif asks:
@@ -280,6 +287,8 @@ class ClaudeCodeProcessor(FrameProcessor):
             parts.append(f"{spoken_list(names)} {'needs' if len(names) == 1 else 'need'} you.")
         if done:
             parts.append(f"{spoken_list(done[:3])} {'is' if len(done) == 1 else 'are'} done.")
+        if progress and not parts:
+            parts.append(progress[-1])
         return " ".join(parts)
 
     async def _speak_now(self, text: str):
