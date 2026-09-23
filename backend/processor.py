@@ -61,6 +61,8 @@ class ClaudeCodeProcessor(FrameProcessor):
         self._dropping = False
         self._pending_turns = 0
         self._raw = ""
+        # Whether this turn's answer was already spoken as it streamed.
+        self._streamed = False
         # The key, not the silence, ends the turn: Flux fires end-of-turn on
         # every pause, so a held key collects those pieces and sends one turn
         # when it comes up. Off when there is no key to hold.
@@ -167,6 +169,7 @@ class ClaudeCodeProcessor(FrameProcessor):
         await self._bridge.state("thinking")
         self._filter.reset()
         self._raw = ""
+        self._streamed = False
         try:
             self._pending_turns += 1
             status = await self._director.send_turn(text)
@@ -351,6 +354,7 @@ class ClaudeCodeProcessor(FrameProcessor):
 
             elif kind == "turn_start":
                 self._raw = ""
+                self._streamed = False
 
             elif kind == "text_delta":
                 if self._pending_turns > 1:
@@ -365,6 +369,7 @@ class ClaudeCodeProcessor(FrameProcessor):
                 # spoken whole at turn end instead (backend/agents.py).
                 if event.get("speak") is False:
                     continue
+                self._streamed = True
                 for chunk in self._filter.feed(event["text"]):
                     await self._speak(chunk)
 
@@ -400,8 +405,10 @@ class ClaudeCodeProcessor(FrameProcessor):
                 self._dropping = False
                 if self._pending_turns > 0:
                     continue
+                # Claude's own result repeats what it just streamed; only a
+                # foreign agent's answer, which wasn't spoken, is said here.
                 answer = (event.get("text") or "").strip()
-                if answer:
+                if answer and not self._streamed:
                     for chunk in self._filter.feed(answer):
                         await self._speak(chunk)
                 for chunk in self._filter.flush():
