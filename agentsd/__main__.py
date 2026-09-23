@@ -15,6 +15,7 @@ from agentsd.config import config
 from agentsd.inbox import Inbox
 from agentsd.pty_host import PtyHost
 from agentsd.snapshot import build
+from agentsd.supervisor import Supervisor
 from agentsd.transcripts import Transcripts
 from agentsd.window import WindowServer, page_origins
 from backend.bridge import NotchBridge
@@ -32,6 +33,15 @@ async def serve():
         config.ws_host, config.ws_port, origins=page_origins(config.ws_host, config.window_port)
     )
     pty = PtyHost()
+    supervisor = Supervisor(
+        bridge.send,
+        explain=config.supervisor_explain,
+        digest_after_s=config.digest_after_s,
+        digest_every_s=config.digest_every_s,
+        hung_s=config.hung_s,
+        silent_s=config.silent_s,
+        speak_progress=config.speak_progress,
+    )
     window = WindowServer(
         config.ws_host, config.window_port, pty, f"ws://{config.ws_host}:{config.ws_port}"
     )
@@ -122,11 +132,17 @@ async def serve():
     bridge.on_connect(lambda: [last, inbox.snapshot(), pty.snapshot()])
     try:
         while True:
-            snapshot = await asyncio.to_thread(build, transcripts, None, pty.running_ids())
+            snapshot = await asyncio.to_thread(
+                build, transcripts, None, pty.running_ids(), set(supervisor.own_pids)
+            )
             if last is None or snapshot["list"] != last["list"] or snapshot["degraded"] != last["degraded"]:
                 await bridge.send(snapshot)
                 last = snapshot
             await inbox.reconcile()
+            try:
+                await supervisor.tick(snapshot["list"])
+            except Exception as e:
+                logger.warning(f"supervisor tick failed: {e}")
             await asyncio.sleep(config.tick_s)
     finally:
         await pty.shutdown()

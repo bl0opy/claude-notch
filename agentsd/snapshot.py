@@ -122,8 +122,14 @@ def fleet_totals(rows: list[dict]) -> dict:
     }
 
 
-def build(transcripts: Transcripts, owned: set[str] | None = None, hosted: set[str] | None = None) -> dict:
+def build(
+    transcripts: Transcripts,
+    owned: set[str] | None = None,
+    hosted: set[str] | None = None,
+    hide_pids: set[int] | None = None,
+) -> dict:
     sessions, degraded = live_sessions()
+    sessions = [s for s in sessions if s.pid not in (hide_pids or set())]
     hosted = hosted or set()
     owned = (owned or set()) | hosted
     rows = [_row(s, transcripts, owned, hosted) for s in sessions]

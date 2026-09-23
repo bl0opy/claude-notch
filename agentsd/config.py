@@ -17,5 +17,14 @@ class Config:
     # for anyone who would rather they didn't.
     send_details: bool = field(default_factory=lambda: os.getenv("AGENTS_SEND_DETAILS", "1") == "1")
 
+    # The supervisor. "off" keeps it to its own rule-based sentences; otherwise a
+    # stuck agent is explained by a short Haiku call through your own `claude`.
+    supervisor_explain: bool = field(default_factory=lambda: os.getenv("SUPERVISOR_EXPLAIN", "claude") != "off")
+    digest_after_s: float = field(default_factory=lambda: float(os.getenv("SUPERVISOR_DIGEST_AFTER_S", "180")))
+    digest_every_s: float = field(default_factory=lambda: float(os.getenv("SUPERVISOR_DIGEST_EVERY_S", "300")))
+    hung_s: float = field(default_factory=lambda: float(os.getenv("SUPERVISOR_HUNG_S", "300")))
+    silent_s: float = field(default_factory=lambda: float(os.getenv("SUPERVISOR_SILENT_S", "300")))
+    speak_progress: bool = field(default_factory=lambda: os.getenv("SUPERVISOR_SPEAK_PROGRESS", "1") == "1")
+
 
 config = Config()
