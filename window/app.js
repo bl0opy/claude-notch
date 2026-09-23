@@ -69,7 +69,13 @@ function send(msg) {
 async function connectRoster() {
   let url = `ws://${location.hostname}:8767`;
   try {
-    url = (await (await fetch('config.json')).json()).roster || url;
+    const config = await (await fetch('config.json')).json();
+    url = config.roster || url;
+    if (config.defaultPath) {
+      const home = config.defaultPath.replace(/^\/Users\/[^/]+/, '~');
+      $('spawn-path').placeholder = `a repo in ${home}, or a full path`;
+      $('spawn-path').title = `Bare names are taken relative to ${home}`;
+    }
   } catch {
     /* default port */
   }

@@ -11,7 +11,7 @@ import sys
 
 from loguru import logger
 
-from agentsd.config import config
+from agentsd.config import config, default_agent_path
 from agentsd.inbox import Inbox
 from agentsd.pty_host import PtyHost
 from agentsd.snapshot import build
@@ -74,7 +74,7 @@ async def serve():
     async def on_spawn(msg):
         cwd = str(msg.get("cwd") or "").strip()
         try:
-            hosted = pty.spawn(cwd)
+            hosted = pty.spawn(cwd, base=default_agent_path())
         except (OSError, ValueError, RuntimeError) as e:
             await fail(f"could not start an agent in {cwd}: {e}")
             return

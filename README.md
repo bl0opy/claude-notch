@@ -248,6 +248,9 @@ path that isn't a directory keeps the prompt open and says so.
 { "default_agent_path": "~/Documents/GitHub/Personal" }
 ```
 
+The terminal window's path box uses the same setting: `bus-tracker` there starts
+in `<default_agent_path>/bus-tracker`.
+
 `settings.json` is yours and gitignored; `run.sh` copies it from
 `settings.example.json` the first time. It's read each time you open the prompt,
 so edits apply without a restart.

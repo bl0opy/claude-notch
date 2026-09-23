@@ -157,8 +157,10 @@ class PtyHost:
     def running_ids(self) -> set[str]:
         return {h.id for h in self.sessions.values() if h.running}
 
-    def spawn(self, cwd: str, cols: int = 120, rows: int = 36) -> Hosted:
-        cwd = os.path.abspath(os.path.expanduser(cwd))
+    def spawn(self, cwd: str, cols: int = 120, rows: int = 36, base: str = "") -> Hosted:
+        """`base` is what a bare name like `bus-tracker` is relative to."""
+        cwd = os.path.expanduser(cwd.strip() or base or "~")
+        cwd = os.path.abspath(os.path.join(base, cwd) if base else cwd)
         if not os.path.isdir(cwd):
             raise ValueError(f"not a directory: {cwd}")
         hosted = Hosted(id=str(uuid.uuid4()), cwd=cwd, cols=cols, rows=rows)

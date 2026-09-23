@@ -1,5 +1,22 @@
+import json
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+SETTINGS = Path(os.getenv("NOTCH_SETTINGS", str(Path(__file__).resolve().parent.parent / "settings.json")))
+
+
+def default_agent_path() -> str:
+    """Where a new agent starts, and what a bare name is relative to.
+
+    The same `default_agent_path` the notch's path prompt uses, read each time so
+    an edit to settings.json applies without a restart.
+    """
+    try:
+        value = json.loads(SETTINGS.read_text()).get("default_agent_path")
+    except (OSError, json.JSONDecodeError, AttributeError):
+        value = None
+    return os.path.expanduser(value or "~")
 
 
 @dataclass

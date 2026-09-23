@@ -21,6 +21,7 @@ from loguru import logger
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
+from agentsd.config import default_agent_path
 from agentsd.pty_host import PtyHost
 
 PAGE_DIR = Path(__file__).resolve().parent.parent / "window"
@@ -71,7 +72,7 @@ class WindowServer:
         if path.startswith("/pty/"):
             return None
         if path == "/config.json":
-            body = json.dumps({"roster": self.roster_url}).encode()
+            body = json.dumps({"roster": self.roster_url, "defaultPath": default_agent_path()}).encode()
             return _response(200, body, "application/json")
         return self._static(path)
 
