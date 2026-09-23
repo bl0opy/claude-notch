@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        TerminalWindow.installMenu()
 
         let geometry = NotchGeometry.current()
         let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
@@ -83,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Agents dashboard", action: #selector(showAgents), keyEquivalent: ""
         ).target = self
         menu.addItem(
+            withTitle: "Terminal window", action: #selector(showTerminals), keyEquivalent: ""
+        ).target = self
+        menu.addItem(
             withTitle: "New agent…", action: #selector(newAgent), keyEquivalent: ""
         ).target = self
         menu.addItem(.separator())
@@ -129,10 +133,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.show(.agents)
     }
 
+    @objc private func showTerminals() {
+        TerminalWindow.shared.show()
+    }
+
     @objc private func newAgent() {
         guard let path = PathPrompt.ask() else { return }
         state.startAgent(in: path)
-        state.show(.agents)
     }
 }
 

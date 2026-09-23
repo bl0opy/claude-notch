@@ -62,7 +62,9 @@ struct RemoteAgent: Identifiable, Equatable {
         tokensOut = (raw["tokens"] as? [String: Any])?["out"] as? Int ?? 0
     }
 
-    var canJump: Bool { Jump.canJump(host: host) }
+    /// Runs in the agents daemon's pty; its terminal is the notch's own window.
+    var hosted: Bool { host == "window" }
+    var canJump: Bool { hosted || Jump.canJump(host: host) }
 
     /// Where it is: `voice-agent/main`.
     var title: String { branch.isEmpty ? project : "\(project)/\(branch)" }

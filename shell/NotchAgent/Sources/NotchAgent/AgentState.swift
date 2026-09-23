@@ -195,6 +195,9 @@ final class AgentState: ObservableObject {
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
             fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
+        case "spawned":
+            // A session the agents daemon just started (or resumed): show it.
+            if let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
         case "focus":
             focused = message["id"] as? String
         case "owned":
@@ -229,9 +232,10 @@ final class AgentState: ObservableObject {
         panel = mode
     }
 
-    /// Start a new agent in a directory of your choosing, owned by the notch.
+    /// Start Claude Code in a directory of your choosing, hosted by the agents
+    /// daemon and shown in the terminal window.
     func startAgent(in cwd: String) {
-        client?.send(["type": "start_agent", "cwd": cwd])
+        fleet?.send(["type": "spawn", "cwd": cwd])
     }
     func setTalking(_ down: Bool) {
         micOpen = down
@@ -252,12 +256,20 @@ final class AgentState: ObservableObject {
     }
 
     func jump(to agent: RemoteAgent) {
-        Jump.to(host: agent.host, tty: agent.tty)
+        if agent.hosted {
+            TerminalWindow.shared.show(session: agent.id)
+        } else {
+            Jump.to(host: agent.host, tty: agent.tty)
+        }
     }
 
-    /// Cut one agent off mid-turn — only the notch's own can be.
+    /// Cut one agent off mid-turn — only one the notch or the daemon runs can be.
     func stop(_ agent: RemoteAgent) {
-        client?.send(["type": "interrupt", "id": agent.id])
+        if agent.hosted {
+            fleet?.send(["type": "interrupt", "id": agent.id])
+        } else {
+            client?.send(["type": "interrupt", "id": agent.id])
+        }
     }
     func send(text: String) { client?.send(["type": "text", "text": text]) }
 }
