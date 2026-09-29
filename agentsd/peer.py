@@ -110,6 +110,10 @@ class Messenger:
     def pending(self, session_id: str) -> int:
         return len(self._held.get(session_id, []))
 
+    @property
+    def holding(self) -> bool:
+        return bool(self._held)
+
     async def send(self, session, text: str) -> Receipt:
         """`session` is an agentsd.registry.LiveSession."""
         if not session.reachable:

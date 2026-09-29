@@ -13,7 +13,9 @@ from loguru import logger
 
 from agentsd.config import config, default_agent_path
 from agentsd.inbox import Inbox
+from agentsd.peer import Messenger
 from agentsd.pty_host import PtyHost
+from agentsd.registry import live_sessions
 from agentsd.snapshot import build
 from agentsd.supervisor import Supervisor
 from agentsd.transcripts import Transcripts
@@ -97,24 +99,52 @@ async def serve():
     async def on_interrupt(msg):
         pty.interrupt(str(msg.get("id") or ""))
 
+    messenger = Messenger()
+    # What a peer receipt means to whoever typed the line.
+    receipt_status = {"delivered": "sent", "queued": "queued", "refused": "refused"}
+
     async def on_type(msg):
-        """A line for a hosted session — typed into its prompt, like a person would."""
+        """A line for a session, typed from the notch or said to it.
+
+        A hosted one gets it typed into its prompt, like a person would; `steer`
+        cancels the turn in flight first. One running in a terminal gets it over
+        its peer socket, held until it's idle, since nothing outside can cut in.
+        """
         session_id = str(msg.get("id") or "")
-        text = str(msg.get("text") or "")
-        if session_id not in pty.running_ids():
-            status = "gone"
-        elif row_state(session_id) == "waiting":
-            # Its screen is a permission dialog: keys would answer it.
-            status = "waiting"
-        elif msg.get("steer") and row_state(session_id) == "working":
-            pty.interrupt(session_id)
-            await asyncio.sleep(STEER_PAUSE_S)
-            await pty.type(session_id, text)
-            status = "steered"
+        text = str(msg.get("text") or "").strip()
+        detail = ""
+        if not text:
+            return
+        if session_id in pty.running_ids():
+            if row_state(session_id) == "waiting":
+                # Its screen is a permission dialog: keys would answer it.
+                status = "waiting"
+            elif msg.get("steer") and row_state(session_id) == "working":
+                pty.interrupt(session_id)
+                await asyncio.sleep(STEER_PAUSE_S)
+                await pty.type(session_id, text)
+                status = "steered"
+            else:
+                await pty.type(session_id, text)
+                status = "sent"
         else:
-            await pty.type(session_id, text)
-            status = "sent"
-        await bridge.send({"type": "typed", "id": session_id, "status": status})
+            sessions, _ = await asyncio.to_thread(live_sessions)
+            session = next((s for s in sessions if s.session_id == session_id), None)
+            if not session:
+                status = "gone"
+            else:
+                receipt = await messenger.send(session, text)
+                status, detail = receipt_status.get(receipt.status, "refused"), receipt.detail
+        await bridge.send({"type": "typed", "id": session_id, "status": status, "detail": detail})
+
+    async def deliver_held():
+        """Lines held for busy terminal sessions go out once they're idle."""
+        if not messenger.holding:
+            return
+        sessions, _ = await asyncio.to_thread(live_sessions)
+        for receipt in await messenger.pump(sessions):
+            status = receipt_status.get(receipt.status, "refused")
+            await bridge.send({"type": "typed", "id": receipt.session_id, "status": status, "detail": receipt.detail})
 
     bridge.on("approve", on_approve)
     bridge.on("spawn", on_spawn)
@@ -139,6 +169,7 @@ async def serve():
                 await bridge.send(snapshot)
                 last = snapshot
             await inbox.reconcile()
+            await deliver_held()
             try:
                 await supervisor.tick(snapshot["list"])
             except Exception as e:
