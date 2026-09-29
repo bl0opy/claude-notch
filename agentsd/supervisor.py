@@ -359,13 +359,15 @@ class Supervisor:
 
     async def _judge(self, row: dict, watch: Watch, turn: Turn, now: float):
         project = row.get("project") or "An agent"
-        fresh = [s for s in detect(turn, now, self._hung, self._silent) if s.key not in watch.fired]
+        signals = detect(turn, now, self._hung, self._silent)
+        fresh = [s for s in signals if s.key not in watch.fired]
         if fresh:
             watch.fired.update(s.key for s in fresh)
-            # A stuck agent gets one alert per turn per reason, and the digests
-            # stop while it is: saying "nine minutes in" about a loop is noise.
             watch.last_digest = now
             self._spawn(self._stuck(row, project, fresh[0], turn, now))
+        # A stuck agent gets one alert per turn per reason, and the digests
+        # stop while it is: saying "nine minutes in" about a loop is noise.
+        if signals:
             return
 
         elapsed = now - turn.started

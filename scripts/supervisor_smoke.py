@@ -143,6 +143,13 @@ async def main() -> int:
     await asyncio.gather(*supervisor._tasks)
     check("nothing repeated on the next tick", len(events) == before, str(events[before:]))
 
+    # Its own supervisor, so going silent doesn't count as a new reason.
+    patient = Supervisor(emit, explain=False, silent_s=10**9)
+    await patient.tick([row("churning")], now)
+    await patient.tick([row("churning")], now + 600)
+    await asyncio.gather(*patient._tasks)
+    check("no progress lines while it's still stuck", not said("churning", "progress"), str(said("churning", "progress")))
+
     steady.call("Edit", {"file_path": "/tmp/demo/nav.py"}, now + 290)
     await supervisor.tick([row("steady")], now + 305)
     check("the next progress line comes five minutes later", len(said("steady", "progress")) == 2)
