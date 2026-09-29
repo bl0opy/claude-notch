@@ -86,6 +86,8 @@ class Hosted:
     proc: subprocess.Popen | None = None
     fd: int = -1
     scrollback: str = ""
+    # Input the pty couldn't take yet, flushed as it drains.
+    pending: bytes = b""
     cols: int = 120
     rows: int = 36
     listeners: set = field(default_factory=set)
@@ -247,6 +249,8 @@ class PtyHost:
     def _reap(self, hosted: Hosted):
         loop = asyncio.get_running_loop()
         loop.remove_reader(hosted.fd)
+        loop.remove_writer(hosted.fd)
+        hosted.pending = b""
         os.close(hosted.fd)
         hosted.fd = -1
         code = None
@@ -272,18 +276,27 @@ class PtyHost:
         hosted = self.sessions.get(session_id)
         if not hosted or not hosted.running:
             return
-        payload = data.encode()
-        while payload:
+        # Never wait on a full pty here: the loop would stop reading its
+        # output, the TUI would block echoing, and neither side would move.
+        queued = bool(hosted.pending)
+        hosted.pending += data.encode()
+        if not queued:
+            self._flush(hosted)
+
+    def _flush(self, hosted: Hosted):
+        loop = asyncio.get_running_loop()
+        while hosted.pending and hosted.running:
             try:
-                sent = os.write(hosted.fd, payload)
+                sent = os.write(hosted.fd, hosted.pending)
             except BlockingIOError:
-                # The pty's input buffer is full; a paste that big is rare
-                # enough to wait out rather than queue.
-                time.sleep(0.01)
-                continue
-            except OSError:
+                loop.add_writer(hosted.fd, self._flush, hosted)
                 return
-            payload = payload[sent:]
+            except OSError:
+                hosted.pending = b""
+                break
+            hosted.pending = hosted.pending[sent:]
+        if hosted.running:
+            loop.remove_writer(hosted.fd)
 
     def resize(self, session_id: str, cols: int, rows: int):
         hosted = self.sessions.get(session_id)
