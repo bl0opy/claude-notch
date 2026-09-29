@@ -11,7 +11,7 @@ import WebKit
 final class TerminalWindow: NSObject, NSWindowDelegate {
     static let shared = TerminalWindow()
 
-    private static let base = URL(string: "http://127.0.0.1:8768/")!
+    private static var base: URL { Ports.window }
 
     private var window: NSWindow?
     private var webView: WKWebView?

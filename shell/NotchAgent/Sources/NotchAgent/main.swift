@@ -48,7 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The agents daemon is a separate process on its own port, so the roster
         // outlives the voice pipeline. Its socket dropping says nothing about the
         // voice agent's phase, so it must not touch it.
-        agentsClient = BridgeClient(url: URL(string: "ws://127.0.0.1:8767")!)
+        agentsClient = BridgeClient(url: Ports.agents)
         agentsClient.onMessage = { [weak self] message in self?.state.apply(message) }
         agentsClient.onConnectionChange = { [weak self] connected in
             if connected {

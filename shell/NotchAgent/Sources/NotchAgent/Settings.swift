@@ -31,3 +31,15 @@ enum Settings {
         return seconds <= 0 ? .infinity : seconds
     }
 }
+
+/// Where the Python side listens: the same environment variables it reads, so
+/// moving a port in the environment `run.sh` starts from moves it everywhere.
+enum Ports {
+    private static func port(_ name: String, _ fallback: Int) -> Int {
+        ProcessInfo.processInfo.environment[name].flatMap(Int.init) ?? fallback
+    }
+
+    static var backend: URL { URL(string: "ws://127.0.0.1:\(port("WS_PORT", 8765))")! }
+    static var agents: URL { URL(string: "ws://127.0.0.1:\(port("AGENTS_WS_PORT", 8767))")! }
+    static var window: URL { URL(string: "http://127.0.0.1:\(port("AGENTS_WINDOW_PORT", 8768))/")! }
+}

@@ -13,7 +13,7 @@ final class BridgeClient {
     var onMessage: (([String: Any]) -> Void)?
     var onConnectionChange: ((Bool) -> Void)?
 
-    init(url: URL = URL(string: "ws://127.0.0.1:8765")!) {
+    init(url: URL = Ports.backend) {
         self.url = url
         self.session = URLSession(configuration: .default)
     }
