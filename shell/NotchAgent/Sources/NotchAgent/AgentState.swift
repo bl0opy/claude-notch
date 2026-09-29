@@ -59,7 +59,10 @@ enum PanelMode: String {
 
 @MainActor
 final class AgentState: ObservableObject {
-    @Published var phase: AgentPhase = .disconnected
+    /// Voice in and out, from settings.json at launch. Off, there's no voice
+    /// backend and the notch is typed to.
+    let voice = Settings.voice
+    @Published var phase: AgentPhase = Settings.voice ? .disconnected : .idle
     @Published var userTranscript: String = ""
     @Published var assistantText: String = ""
     @Published var tools: [ToolEvent] = []
@@ -104,9 +107,34 @@ final class AgentState: ObservableObject {
     @Published var notice: Notice?
     private var noticeTimer: Task<Void, Never>?
 
+    /// True while the compose field has the keyboard: the panel stays open
+    /// with the cursor elsewhere, since you're mid-sentence.
+    @Published var composing: Bool = false
+    /// Bumped to pull the keyboard into the compose field (⌃⌥T).
+    @Published var composeRequest: Int = 0
+    /// What became of the last typed line, while it's worth showing.
+    @Published var typedStatus: String = ""
+    private var typedTarget: String?
+    private var typedTimer: Task<Void, Never>?
+
+    /// Who a typed line goes to. With voice, nil is the voice agent's own
+    /// session; typing only, there's no such thing, so it's the chosen row, or
+    /// failing that the one most likely to be wanted.
+    var target: RemoteAgent? {
+        if let focused, let agent = agents.first(where: { $0.id == focused }) { return agent }
+        if voice { return nil }
+        return agents.first(where: \.hosted) ?? agents.first
+    }
+
+    var targetName: String {
+        if let target { return target.title.isEmpty ? "that agent" : target.title }
+        return voice ? "the voice agent" : "an agent"
+    }
+
     /// A foreign agent — one started in a terminal — can be talked to and
     /// approved, but not interrupted.
     var canInterrupt: Bool {
+        if !voice { return target?.hosted ?? false }
         guard let focused else { return true }
         if ownedIds.contains(focused) { return true }
         guard let agent = agents.first(where: { $0.id == focused }) else { return true }
@@ -116,7 +144,7 @@ final class AgentState: ObservableObject {
     /// The panel is only ever open under the cursor, or while the talk key is
     /// held, and a little after. Work in progress shows as the pill instead, which is enough to see
     /// Claw'd without the panel covering what you're doing.
-    var expanded: Bool { hovering || micOpen || lingering }
+    var expanded: Bool { hovering || micOpen || lingering || composing }
 
     /// After the talk key comes up the panel stays open through the reply and
     /// a few seconds past it, so you can read what it heard and what it said.
@@ -241,6 +269,9 @@ final class AgentState: ObservableObject {
             fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
         case "fleet_event":
             post(message)
+        case "typed":
+            guard let id = message["id"] as? String, id == typedTarget else { return }
+            showTyped(message["status"] as? String ?? "", detail: message["detail"] as? String ?? "")
         case "spawned":
             // A session the agents daemon just started (or resumed): show it.
             if let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
@@ -294,7 +325,13 @@ final class AgentState: ObservableObject {
         if let agent = agents.first(where: { $0.id == notice.sessionId }) { jump(to: agent) }
     }
 
-    func interrupt() { client?.send(["type": "interrupt"]) }
+    func interrupt() {
+        if let target, target.hosted {
+            fleet?.send(["type": "interrupt", "id": target.id])
+        } else {
+            client?.send(["type": "interrupt"])
+        }
+    }
     func focus(_ id: String) {
         focused = id
         client?.send(["type": "focus", "id": id])
@@ -351,5 +388,44 @@ final class AgentState: ObservableObject {
             client?.send(["type": "interrupt", "id": agent.id])
         }
     }
-    func send(text: String) { client?.send(["type": "text", "text": text]) }
+    /// A typed line. Any session on the roster gets it through the agents
+    /// daemon: typed into a hosted one's prompt, or over a terminal one's peer
+    /// socket once it's idle. `steer` cuts a hosted one's turn short first.
+    /// Only the voice agent's own session goes to the voice backend.
+    func send(text: String, steer: Bool = false) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let target {
+            typedTarget = target.id
+            fleet?.send(["type": "type", "id": target.id, "text": text, "steer": steer])
+            showTyped("sending", detail: "")
+        } else if voice {
+            client?.send(["type": "text", "text": text])
+        }
+    }
+
+    func requestCompose() {
+        panel = .focus
+        composeRequest += 1
+    }
+
+    private func showTyped(_ status: String, detail: String) {
+        let name = targetName
+        switch status {
+        case "sending": typedStatus = "→ \(name)"
+        case "sent": typedStatus = "sent to \(name)"
+        case "steered": typedStatus = "steered \(name)"
+        case "queued": typedStatus = "\(name) is busy — it gets this when it's free"
+        case "waiting": typedStatus = "\(name) is waiting on a permission question — answer that first"
+        case "gone": typedStatus = "\(name) isn't running any more"
+        default: typedStatus = detail.isEmpty ? "couldn't reach \(name)" : "couldn't reach \(name): \(detail)"
+        }
+        typedTimer?.cancel()
+        guard status != "sending" else { return }
+        typedTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.typedStatus = ""
+        }
+    }
 }

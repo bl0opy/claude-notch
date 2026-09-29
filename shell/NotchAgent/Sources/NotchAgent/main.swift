@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -11,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeyMonitor: Any?
     private var mouse: MouseTracker?
     private let pushToTalk = PushToTalk()
+    private var watchers: Set<AnyCancellable> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -43,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.phase = .disconnected
             }
         }
-        client.connect()
+        // Typing only, there's no voice backend to reach.
+        if state.voice { client.connect() }
 
         // The agents daemon is a separate process on its own port, so the roster
         // outlives the voice pipeline. Its socket dropping says nothing about the
@@ -64,8 +67,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItem()
         installHotKey()
 
-        pushToTalk.onChange = { [weak self] down in self?.state.setTalking(down) }
-        pushToTalk.install()
+        if state.voice {
+            pushToTalk.onChange = { [weak self] down in self?.state.setTalking(down) }
+            pushToTalk.install()
+            NotificationCenter.default.publisher(for: Settings.changed)
+                .sink { [weak self] _ in
+                    guard let self, PushToTalk.Key.configured != PushToTalk.key else { return }
+                    self.pushToTalk.reload()
+                    self.installStatusItem()
+                }
+                .store(in: &watchers)
+        }
+
+        // The notch takes the keyboard only while you're typing in it; done,
+        // it goes back to whatever app you were in.
+        state.$composing
+            .removeDuplicates()
+            .sink { [weak self] composing in
+                guard !composing, let window = self?.window, window.isKeyWindow,
+                      let app = NSWorkspace.shared.frontmostApplication, app != .current else { return }
+                app.activate()
+            }
+            .store(in: &watchers)
     }
 
     /// When run.sh started the agents daemon, quitting the notch takes the
@@ -96,10 +119,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func installStatusItem() {
+        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.title = "◎"
         let menu = NSMenu()
-        menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
+        if state.voice {
+            menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
+        }
+        menu.addItem(
+            withTitle: "Type to an agent (⌃⌥T)", action: #selector(compose), keyEquivalent: ""
+        ).target = self
         menu.addItem(
             withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
         ).target = self
@@ -116,6 +145,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "New agent…", action: #selector(newAgent), keyEquivalent: ""
         ).target = self
         menu.addItem(.separator())
+        menu.addItem(
+            withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ","
+        ).target = self
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         item.menu = menu
         statusItem = item
@@ -126,6 +158,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// - ⌥Space: shut it up.
     /// - ⌃⌥Y / ⌃⌥N: allow or deny the oldest open question.
     /// - ⌃⌥J: show the terminal it came from.
+    /// - ⌃⌥T: type to the focused agent.
     ///
     /// Global monitors can't swallow a key, so the approval keys use ⌃⌥ — nothing
     /// a terminal or an editor does anything with.
@@ -142,6 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             state.interrupt()
             return
         }
+        if flags.contains([.control, .option]), code == 17 {    // T
+            compose()
+            return
+        }
         guard flags.contains([.control, .option]), let top = state.topApproval else { return }
         switch code {
         case 16: state.answer(top, approved: true)    // Y
@@ -149,6 +186,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case 38: state.jump(to: top)                  // J
         default: break
         }
+    }
+
+    @objc private func compose() {
+        window?.makeKey()
+        state.requestCompose()
+    }
+
+    @objc private func showSettings() {
+        SettingsWindow.shared.show()
     }
 
     @objc private func interrupt() {

@@ -171,12 +171,23 @@ struct NotchView: View {
             if !state.tools.isEmpty || state.phase == .thinking {
                 ActivityFeed(tools: state.tools, working: state.phase == .thinking)
             }
+            if !state.voice, let target = state.target {
+                TargetLine(agent: target)
+            }
             if state.userTranscript.isEmpty, state.assistantText.isEmpty, state.tools.isEmpty {
-                Text(state.micOpen ? "listening…" : "hold \(PushToTalk.key.label) and say something")
+                Text(emptyHint)
                     .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(Color(white: 0.34))
             }
+            ComposeField(state: state)
         }
+    }
+
+    private var emptyHint: String {
+        if state.micOpen { return "listening…" }
+        if state.voice { return "hold \(PushToTalk.key.label) and say something, or type below" }
+        if state.target == nil { return "no agents yet — + agent on the agents tab starts one" }
+        return "type below to message it · click a row on the agents tab to pick another"
     }
 
     /// Every claude session on the machine, and the button that adds one.
@@ -226,7 +237,7 @@ struct NotchView: View {
                         .foregroundStyle(AgentPhase.waiting.tint.opacity(0.8))
                 }
                 Spacer()
-                Text("click a row for the mic · ↗ to its terminal")
+                Text(state.voice ? "click a row for the mic · ↗ to its terminal" : "click a row to message it · ↗ to its terminal")
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(Color(white: 0.34))
             }
@@ -246,9 +257,7 @@ struct NotchView: View {
             }
             .buttonStyle(.plain)
             .disabled(!state.canInterrupt)
-            Text(state.micOpen
-                 ? "listening — one turn until you let go"
-                 : "hold \(PushToTalk.key.label) to talk")
+            Text(footerHint)
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(state.micOpen ? AgentPhase.listening.tint : Color(white: 0.38))
             Spacer()
@@ -260,10 +269,90 @@ struct NotchView: View {
         }
     }
 
+    private var footerHint: String {
+        if state.micOpen { return "listening — one turn until you let go" }
+        if state.composing { return "↩ send · ⌘↩ steer · esc done" }
+        return state.voice ? "hold \(PushToTalk.key.label) to talk · ⌃⌥T to type" : "⌃⌥T to type"
+    }
+
     private func newAgent() {
         guard let path = PathPrompt.ask() else { return }
         state.startAgent(in: path)
         state.panel = .agents
+    }
+}
+
+/// A line typed to the target agent. Return sends it; ⌘Return steers a
+/// hosted one, cutting its turn short first, the way talking over it does.
+private struct ComposeField: View {
+    @ObservedObject var state: AgentState
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var disabled: Bool { !state.voice && state.target == nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text("›")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: focused ? 0.8 : 0.4))
+                TextField("", text: $text, prompt: Text("message \(state.targetName)").foregroundStyle(Color(white: 0.32)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.9))
+                    .focused($focused)
+                    .disabled(disabled)
+                    .onKeyPress(.return, phases: .down) { press in
+                        submit(steer: press.modifiers.contains(.command))
+                        return .handled
+                    }
+                    .onExitCommand { focused = false }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(white: focused ? 0.12 : 0.08))
+                    .strokeBorder(Color(white: focused ? 0.26 : 0.14), lineWidth: 1)
+            )
+            if !state.typedStatus.isEmpty {
+                Text(state.typedStatus)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.5))
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: focused) { _, value in state.composing = value }
+        .onChange(of: state.composeRequest) { _, _ in focused = true }
+        .animation(.easeOut(duration: 0.15), value: state.typedStatus)
+    }
+
+    private func submit(steer: Bool) {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        state.send(text: text, steer: steer)
+        text = ""
+    }
+}
+
+/// Typing only: who the compose field is talking to, and what it's doing.
+private struct TargetLine: View {
+    let agent: RemoteAgent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(agent.state.tint)
+                .frame(width: 6, height: 6)
+            Text(agent.title)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(white: 0.88))
+            Text(agent.subtitle)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color(white: 0.5))
+                .lineLimit(1)
+        }
     }
 }
 
