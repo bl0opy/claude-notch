@@ -246,7 +246,7 @@ like `bus-tracker` is taken relative to it; `~` and absolute paths work too. A
 path that isn't a directory keeps the prompt open and says so.
 
 ```json
-{ "default_agent_path": "~/Documents/GitHub/Personal" }
+{ "default_agent_path": "~/code" }
 ```
 
 The terminal window's path box uses the same setting: `bus-tracker` there starts
