@@ -19,7 +19,7 @@ clicks and hotkeys, but nothing spoken.
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
+.venv/bin/pip install -r requirements-voice.txt   # or requirements.txt, with "voice": false in settings.json
 scripts/install-hooks.sh           # add the permission hook to ~/.claude/settings.json
 ```
 

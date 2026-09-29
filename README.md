@@ -36,6 +36,9 @@ Claude plan.
   back (the first two sentences) and shown in full in the notch.
 - **Steer it mid-turn.** Talking again while it's working interrupts and
   redirects it, the way typing at Claude Code mid-turn does.
+- **Or just type.** ⌃⌥T from any app opens a line in the notch: message any
+  session, or steer one mid-turn with ⌘↩. Voice is optional — turn it off in
+  Settings and it runs anywhere Claude Code does on a Mac, no speech models.
 - **See every session.** Every `claude` process on the machine, terminal or
   not: project, branch, what it's doing, tokens spent, worst state first.
 - **Answer every permission prompt from one place.** Click, press ⌃⌥Y, or say
@@ -111,19 +114,27 @@ sequenceDiagram
 
 ## Requirements
 
-- macOS on Apple Silicon (parakeet-mlx is MLX-only; set `STT_BACKEND=deepgram`
-  on Intel).
+- macOS 14+.
 - Python 3.11 (pyenv 3.11.6 is what it's built on).
 - Swift 5.9+ / Xcode command line tools, to build the shell.
 - [Claude Code](https://code.claude.com) on PATH and logged in.
-- About 1.6 GB of disk for the speech models, downloaded on first run.
+- For voice only: Apple Silicon (parakeet-mlx is MLX-only; set
+  `STT_BACKEND=deepgram` elsewhere) and about 1.6 GB of disk for the speech
+  models, downloaded on first run.
 
 ## Install
 
 ```bash
 git clone https://github.com/bl0opy/voice-agent.git && cd voice-agent
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
+.venv/bin/pip install -r requirements-voice.txt    # voice and typing
+```
+
+Typing only — no mic, no speech models, any Mac:
+
+```bash
+.venv/bin/pip install -r requirements.txt
+echo '{ "voice": false }' > settings.json
 ```
 
 That's everything. Then, optionally:
@@ -135,7 +146,7 @@ scripts/install-agentsd.sh   # run the agents daemon at login (launchd)
 
 **Permissions.** System Settings → Privacy & Security → **Accessibility**: allow
 whichever app launches the notch (Terminal, if you use `./run.sh`). Push-to-talk,
-⌥Space and ⌃⌥Y / N / J all need it. macOS asks for **Automation** the first time
+⌥Space and ⌃⌥T / Y / N / J all need it. macOS asks for **Automation** the first time
 ↗ selects a tab in Terminal or iTerm2, and for the **Microphone** the first time
 the backend opens it.
 
@@ -146,7 +157,7 @@ the backend opens it.
 ```
 
 That builds the shell, starts the agents daemon (unless launchd already runs
-it), the voice backend, and the notch. Ctrl-C, or quitting the notch from its
+it), the voice backend (unless voice is off), and the notch. Ctrl-C, or quitting the notch from its
 menu bar item (◎), stops everything it started. If the repo has moved, `run.sh`
 clears SwiftPM's stale cache and builds again.
 
@@ -185,15 +196,38 @@ Other keys, from any app:
 | Key | Does |
 |---|---|
 | right ⌥ (hold) | Talk |
+| ⌃⌥T | Type to the focused agent |
 | ⌥Space | Interrupt the focused agent |
 | ⌃⌥Y / ⌃⌥N | Allow / deny the oldest permission question |
 | ⌃⌥J | Bring the terminal that question came from to the front |
 
-Pick a different talk key with `PTT_KEY` (in the environment `run.sh` starts
-from, or `defaults write` `PTTKey`): `rightOption` (default), `rightCommand`,
+Pick a different talk key in ◎ → Settings…, or with `PTT_KEY` in the
+environment `run.sh` starts from: `rightOption` (default), `rightCommand`,
 `fn`, `leftOption`, `command`. `command` has to be held alone for 200 ms and any
 other key cancels it, since ⌘ is half of every shortcut. `PUSH_TO_TALK=0` gives
 the old always-on mic.
+
+### Typing to it
+
+⌃⌥T from any app, or a click on the line at the bottom of the focus tab, and
+type. The notch holds the keyboard until you press esc, then hands it back to
+the app you were in.
+
+- **↩** sends. A hosted session gets it typed into its prompt, as if you'd
+  typed it in the terminal window, so a busy one queues it the way Claude Code
+  does. A session in a terminal gets it over its peer socket once it's idle.
+- **⌘↩** steers: a hosted session's turn is cut short first, then the line goes
+  in its place — the same as talking over it.
+
+It goes to the agent you last clicked on the agents tab. With voice on and
+nothing picked, it goes to the voice agent; typing only, to the first hosted
+session. Under the field it says what happened: sent, held until it's free,
+or waiting on a permission question you have to answer first.
+
+With `"voice": false`, that's the whole input: `run.sh` doesn't start the
+voice backend, there's no mic and no speech models, and nothing needs Apple
+Silicon. Everything else — the roster, approval cards, the supervisor's lines
+in the notch, the terminal window — works the same.
 
 ### The notch
 
@@ -456,9 +490,15 @@ installed, the backend falls back to Deepgram on its own.
 
 Two files, both optional and both gitignored:
 
-- **`settings.json`** — the notch shell's settings: `default_agent_path`, and
-  `notch_fold_after`, the seconds of quiet before the pill folds into the
-  hardware notch (default 300; 0 keeps it up).
+- **`settings.json`** — the notch's settings, edited in ◎ → Settings… (⌘,) or
+  by hand:
+
+  | Key | Default | |
+  |---|---|---|
+  | `voice` | `true` | `false`: typing only, no voice backend. Read at launch |
+  | `talk_key` | `rightOption` | The push-to-talk key; `PTT_KEY` overrides it |
+  | `default_agent_path` | `~` | Where new agents start; bare names are relative to it |
+  | `notch_fold_after` | `300` | Seconds of quiet before the pill folds away; 0 keeps it up |
 - **`.env`** — the backend's and daemon's environment. Anything below can also
   be set in the shell environment instead.
 
@@ -490,7 +530,7 @@ Two files, both optional and both gitignored:
 | Variable | Default | |
 |---|---|---|
 | `PUSH_TO_TALK` | `1` | `0` for an always-on mic |
-| `PTT_KEY` | `rightOption` | Read by the shell, not the backend |
+| `PTT_KEY` | `rightOption` | Read by the shell, not the backend; overrides `talk_key` |
 | `PTT_TAIL_MS` | `400` | How long after key-up the turn is sealed |
 | `SPOKEN_SENTENCES` | `2` | The notch shows everything regardless |
 | `MIC_GATE` | `1` | Hold the mic shut while it talks; `0` on headphones |
@@ -614,7 +654,7 @@ Agents daemon (`ws://127.0.0.1:8767`) → shell and backend:
                         "reason": "failing|looping|hung|silent|churning", "level": "info|attention", "speak": true}
 {"type": "hosted",      "list": [{"id": "...", "cwd": "...", "pid": 123, "running": true, "exitCode": null, "startedAt": 1789578000000}]}
 {"type": "spawned",     "id": "...", "cwd": "..."}
-{"type": "typed",       "id": "...", "status": "sent|steered|waiting|gone"}
+{"type": "typed",       "id": "...", "status": "sent|steered|queued|waiting|gone|refused", "detail": "..."}
 {"type": "error",       "message": "..."}
 ```
 
@@ -624,7 +664,7 @@ Shell, backend or window → agents daemon:
 {"type": "approve",   "id": "...", "approved": true, "always": false, "how": "from the notch"}
 {"type": "spawn",     "cwd": "/path/to/a/repo"}
 {"type": "resume",    "id": "<hosted session id>"}
-{"type": "type",      "id": "...", "text": "a line for its prompt", "steer": true}
+{"type": "type",      "id": "...", "text": "a line for it", "steer": true}   // any session; steer only cuts in on hosted ones
 {"type": "interrupt", "id": "..."}
 {"type": "stop",      "id": "..."}
 {"type": "forget",    "id": "..."}
@@ -643,6 +683,8 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 |---|---|
 | `run.sh` | Builds the shell, starts everything, stops it all on exit |
 | `settings.example.json` | Template for `settings.json` |
+| `requirements.txt` | The daemon and the notch: all that typing only needs |
+| `requirements-voice.txt` | Adds the voice backend: pipecat, parakeet, Kokoro |
 | **`backend/`** | **Voice backend** |
 | `backend/main.py` | Pipecat pipeline wiring, shell message handlers |
 | `backend/config.py` | Every environment variable and its default |
@@ -673,7 +715,8 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `.../NotchView.swift` | The panel: focus and agents tabs, cards, roster |
 | `.../PushToTalk.swift` | Global key watcher: right ⌥ opens the mic |
 | `.../PathPrompt.swift` | The path prompt behind `+ agent` |
-| `.../Settings.swift` | Reads `settings.json` |
+| `.../Settings.swift` | Reads and writes `settings.json`; the ports |
+| `.../SettingsWindow.swift` | ◎ → Settings… |
 | `.../Jump.swift` | Brings a session's terminal to the front |
 | `.../TerminalWindow.swift` | Native window around the terminal page |
 | **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
