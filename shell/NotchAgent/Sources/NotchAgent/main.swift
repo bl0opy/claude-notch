@@ -68,6 +68,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pushToTalk.install()
     }
 
+    /// When run.sh started the agents daemon, quitting the notch takes the
+    /// daemon down with it, and every session hosted in its ptys too. ⌘Q is
+    /// muscle memory in a terminal, so busy ones are worth a question first.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard ProcessInfo.processInfo.environment["NOTCH_OWNS_DAEMON"] == "1" else { return .terminateNow }
+        let busy = state.agents.filter { $0.hosted && ($0.state == .working || $0.state == .waiting) }
+        guard !busy.isEmpty else { return .terminateNow }
+
+        let alert = NSAlert()
+        let names = busy.map(\.project).filter { !$0.isEmpty }
+        alert.messageText = busy.count == 1 ? "An agent is still working" : "\(busy.count) agents are still working"
+        alert.informativeText = (names.isEmpty ? "" : names.joined(separator: ", ") + ". ")
+            + "Quitting stops the agents daemon and every session in the terminal window."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Quit Anyway")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         client?.disconnect()
         agentsClient?.disconnect()

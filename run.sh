@@ -81,6 +81,7 @@ elif listening 8766; then
 else
   "$PY" -m agentsd > >(tee -a "$LOGS/agentsd.log") 2>&1 &
   PIDS+=($!)
+  export NOTCH_OWNS_DAEMON=1
   wait_for_port "$WINDOW_PORT" || die "the agents daemon didn't start — see $LOGS/agentsd.log"
 fi
 
