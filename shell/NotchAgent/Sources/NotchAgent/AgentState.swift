@@ -110,8 +110,10 @@ final class AgentState: ObservableObject {
     /// True while the compose field has the keyboard: the panel stays open
     /// with the cursor elsewhere, since you're mid-sentence.
     @Published var composing: Bool = false
-    /// Bumped to pull the keyboard into the compose field (⌃⌥T).
+    /// Bumped to pull the keyboard into the compose field (⌃⌥T), and to let
+    /// go of it when the notch stops being the key window.
     @Published var composeRequest: Int = 0
+    @Published var composeDismiss: Int = 0
     /// What became of the last typed line, while it's worth showing.
     @Published var typedStatus: String = ""
     private var typedTarget: String?
@@ -406,7 +408,13 @@ final class AgentState: ObservableObject {
 
     func requestCompose() {
         panel = .focus
+        composing = true
         composeRequest += 1
+    }
+
+    func endCompose() {
+        composing = false
+        composeDismiss += 1
     }
 
     private func showTyped(_ status: String, detail: String) {

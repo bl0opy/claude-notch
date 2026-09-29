@@ -79,6 +79,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .store(in: &watchers)
         }
 
+        // Clicking into another app ends typing, or the panel would stay open.
+        NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification, object: window)
+            .sink { [weak self] _ in self?.state.endCompose() }
+            .store(in: &watchers)
+
         // The notch takes the keyboard only while you're typing in it; done,
         // it goes back to whatever app you were in.
         state.$composing

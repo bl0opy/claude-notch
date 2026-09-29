@@ -303,10 +303,9 @@ private struct ComposeField: View {
                     .foregroundStyle(Color(white: 0.9))
                     .focused($focused)
                     .disabled(disabled)
-                    .onKeyPress(.return, phases: .down) { press in
-                        submit(steer: press.modifiers.contains(.command))
-                        return .handled
-                    }
+                    // The field editor takes Return for itself, so ⌘ is read
+                    // off the keyboard as it's submitted.
+                    .onSubmit { submit(steer: NSEvent.modifierFlags.contains(.command)) }
                     .onExitCommand { focused = false }
             }
             .padding(.horizontal, 10)
@@ -325,8 +324,16 @@ private struct ComposeField: View {
             }
         }
         .onChange(of: focused) { _, value in state.composing = value }
-        .onChange(of: state.composeRequest) { _, _ in focused = true }
+        .onChange(of: state.composeRequest) { _, _ in take() }
+        .onChange(of: state.composeDismiss) { _, _ in focused = false }
+        // ⌃⌥T on a folded notch opens the panel first; the field it asked
+        // for only exists once it's open.
+        .onAppear { if state.composing { take() } }
         .animation(.easeOut(duration: 0.15), value: state.typedStatus)
+    }
+
+    private func take() {
+        DispatchQueue.main.async { focused = true }
     }
 
     private func submit(steer: Bool) {
