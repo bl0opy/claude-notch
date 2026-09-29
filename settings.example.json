@@ -1,4 +1,5 @@
 {
+  "voice": true,
   "default_agent_path": "~",
   "notch_fold_after": 300
 }

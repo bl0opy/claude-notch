@@ -27,8 +27,17 @@ wait_for_port() {
 
 [ -x "$PY" ] || die "no .venv — pyenv local 3.11.6 && python -m venv .venv (see README)"
 command -v claude >/dev/null || die "claude isn't on PATH"
-listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
 mkdir -p "$LOGS"
+
+[ -f settings.json ] || cp settings.example.json settings.json
+# "voice": false in settings.json runs without the voice backend: no mic, no
+# speech models, and nothing that needs Apple Silicon. The notch is typed to.
+VOICE=$("$PY" -c 'import json; print(json.load(open("settings.json")).get("voice", True) is not False)' 2>/dev/null || echo True)
+if [ "$VOICE" = True ]; then
+  listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
+  "$PY" -c 'import pipecat' 2>/dev/null \
+    || die "voice is on but its packages aren't installed — .venv/bin/pip install -r requirements-voice.txt, or set \"voice\": false in settings.json"
+fi
 
 # SwiftPM bakes absolute paths into its module cache, so a moved repo fails to
 # build until the cache is gone.
@@ -85,17 +94,19 @@ else
   wait_for_port "$WINDOW_PORT" || die "the agents daemon didn't start — see $LOGS/agentsd.log"
 fi
 
-"$PY" -m backend.main > >(tee -a "$LOGS/backend.log") 2>&1 &
-BACKEND=$!
-PIDS+=($BACKEND)
+BACKEND=
+if [ "$VOICE" = True ]; then
+  "$PY" -m backend.main > >(tee -a "$LOGS/backend.log") 2>&1 &
+  BACKEND=$!
+  PIDS+=($BACKEND)
 
-for _ in $(seq 1 50); do
-  listening 8765 && break
-  kill -0 "$BACKEND" 2>/dev/null || die "backend exited during startup — see $LOGS/backend.log"
-  sleep 0.2
-done
+  for _ in $(seq 1 50); do
+    listening 8765 && break
+    kill -0 "$BACKEND" 2>/dev/null || die "backend exited during startup — see $LOGS/backend.log"
+    sleep 0.2
+  done
+fi
 
-[ -f settings.json ] || cp settings.example.json settings.json
 NOTCH_SETTINGS="$PWD/settings.json" "$SHELL_DIR/.build/release/NotchAgent" > >(tee -a "$LOGS/shell.log") 2>&1 &
 NOTCH=$!
 PIDS+=($NOTCH)
@@ -105,17 +116,19 @@ cat <<EOF
   notch agent is up
   terminal window   http://127.0.0.1:$WINDOW_PORT  (or ◎ → Terminal window)
   new agent         + agent in the notch, or type a path in the window
-  talk              hold right ⌥
+  $([ "$VOICE" = True ] && echo "talk              hold your talk key (◎ → Settings…)" || echo "voice             off — ⌃⌥T types to an agent")
+  type              ⌃⌥T from any app
   logs              $LOGS
 
 EOF
 
 # Whichever of backend or shell goes first takes the rest down with it.
 # (macOS ships bash 3.2 — no `wait -n`.)
-while kill -0 "$BACKEND" 2>/dev/null && kill -0 "$NOTCH" 2>/dev/null; do
+backend_up() { [ -z "$BACKEND" ] || kill -0 "$BACKEND" 2>/dev/null; }
+while backend_up && kill -0 "$NOTCH" 2>/dev/null; do
   sleep 1
 done
-if ! kill -0 "$BACKEND" 2>/dev/null; then
+if ! backend_up; then
   echo "run.sh: the voice backend exited — last lines of $LOGS/backend.log:" >&2
   tail -n 15 "$LOGS/backend.log" >&2 || true
 fi
