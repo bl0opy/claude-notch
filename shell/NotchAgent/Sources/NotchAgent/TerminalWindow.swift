@@ -68,7 +68,7 @@ final class TerminalWindow: NSObject, NSWindowDelegate {
         webView?.removeFromSuperview()
         webView = nil
         window = nil
-        NSApp.setActivationPolicy(.accessory)
+        DockIcon.release(closing: notification.object as? NSWindow)
     }
 
     private static func jsString(_ value: String) -> String {
