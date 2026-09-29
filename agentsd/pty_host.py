@@ -166,8 +166,8 @@ class PtyHost:
         if not os.path.isdir(cwd):
             raise ValueError(f"not a directory: {cwd}")
         hosted = Hosted(id=str(uuid.uuid4()), cwd=cwd, cols=cols, rows=rows)
-        self.sessions[hosted.id] = hosted
         self._start(hosted, ["--session-id", hosted.id])
+        self.sessions[hosted.id] = hosted
         self._trim()
         self._changed()
         return hosted
