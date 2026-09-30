@@ -640,7 +640,9 @@ private struct NoticeLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle()
-                .fill(notice.attention ? AgentPhase.waiting.tint : Color(white: 0.45))
+                .fill(notice.attention ? AgentPhase.waiting.tint
+                      : notice.kind == .done ? Color(red: 0.36, green: 0.85, blue: 0.55)
+                      : Color(white: 0.45))
                 .frame(width: 6, height: 6)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 3) {

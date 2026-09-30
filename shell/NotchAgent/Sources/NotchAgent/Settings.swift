@@ -41,6 +41,12 @@ enum Settings {
         (load()["voice"] as? Bool) ?? true
     }
 
+    /// A system sound for a new question, a stuck agent or a long turn
+    /// finishing. On by default only when there's no voice to say so.
+    static func sounds(voice: Bool) -> Bool {
+        (load()["sounds"] as? Bool) ?? !voice
+    }
+
     /// The push-to-talk key. `PTT_KEY` in the environment still wins.
     static var talkKey: String {
         (load()["talk_key"] as? String) ?? ""

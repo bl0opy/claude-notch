@@ -15,7 +15,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 420),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -63,6 +63,7 @@ private struct SettingsView: View {
     @State private var talkKey = PushToTalk.key
     @State private var agentPath = Settings.defaultAgentPath
     @State private var foldAfter = Settings.foldAfterSeconds
+    @State private var sounds = Settings.sounds(voice: Settings.voice)
     private let voiceAtLaunch = Settings.voice
 
     private static let foldChoices: [(String, Double)] = [
@@ -103,6 +104,14 @@ private struct SettingsView: View {
                 }
             }
 
+            section("sounds") {
+                Toggle("a sound for new questions, stuck agents and long turns finishing", isOn: $sounds)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.system(size: 11))
+                    .onChange(of: sounds) { _, value in Settings.set("sounds", value) }
+            }
+
             section("new agents start in") {
                 HStack(spacing: 8) {
                     TextField("~", text: $agentPath)
@@ -138,7 +147,7 @@ private struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 460, height: 420, alignment: .topLeading)
+        .frame(width: 460, height: 480, alignment: .topLeading)
         .onDisappear { Settings.set("default_agent_path", agentPath) }
     }
 

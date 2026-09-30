@@ -39,17 +39,29 @@ struct ToolEvent: Identifiable {
     var status: Status = .running
 }
 
-/// A line from the supervisor about an agent you aren't focused on: how a long
-/// turn is going, or that it looks stuck. Shown in the notch for a few seconds.
+/// A line about an agent you aren't talking to: how a long turn is going, that
+/// it looks stuck, or that it's finished. Shown in the notch for a few seconds.
 struct Notice: Identifiable, Equatable {
+    enum Kind: String { case progress, stuck, done }
+
     let id = UUID()
     let sessionId: String
     let project: String
     let line: String
-    let attention: Bool
+    let kind: Kind
+
+    var attention: Bool { kind == .stuck }
 
     /// Long enough to read a sentence; a stuck agent stays up a little longer.
     var lifetime: Duration { attention ? .seconds(14) : .seconds(9) }
+
+    /// "done after 4 minutes", in the words the notice reads out.
+    static func doneLine(project: String, seconds: Int) -> String {
+        let name = project.isEmpty ? "An agent" : project
+        guard seconds >= 60 else { return "\(name) done after \(max(seconds, 1)) seconds" }
+        let minutes = seconds / 60
+        return "\(name) done after \(minutes) minute\(minutes == 1 ? "" : "s")"
+    }
 }
 
 /// The panel shows one thing at a time: the agent you're talking to, or all of them.
@@ -251,8 +263,12 @@ final class AgentState: ObservableObject {
         case "assistant_done":
             if let text = message["text"] as? String, !text.isEmpty { assistantText = text }
         case "approvals":
+            let before = Set(approvals.map(\.id))
             approvals = (message["list"] as? [[String: Any]] ?? []).compactMap(ApprovalRequest.init)
             snoozed.formIntersection(approvals.map(\.id))
+            // The first list after connecting is what was already waiting, not news.
+            if approvalsLoaded, approvals.contains(where: { !before.contains($0.id) }) { chime(.attention) }
+            approvalsLoaded = true
         case "tool":
             let event = ToolEvent(
                 id: message["id"] as? String ?? UUID().uuidString,
@@ -297,20 +313,28 @@ final class AgentState: ObservableObject {
         }
     }
 
-    /// Supervisor lines about the agent you're talking to are noise: you can hear it.
+    /// With voice, lines about the agent you're talking to are noise: you can
+    /// hear it. Typing, you can't, so every agent's news shows. A turn's end
+    /// shows only when it ran long enough that you'd have looked away.
     private func post(_ message: [String: Any]) {
-        guard let event = message["event"] as? String, event == "progress" || event == "stuck",
-              let sessionId = message["sessionId"] as? String, sessionId != focused,
-              let line = message["line"] as? String, !line.isEmpty else { return }
-        // A progress line never covers a stuck one still being read.
-        if let current = notice, current.attention, event == "progress" { return }
-        let next = Notice(
-            sessionId: sessionId,
-            project: message["project"] as? String ?? "",
-            line: line,
-            attention: event == "stuck"
-        )
+        guard let raw = message["event"] as? String, let kind = Notice.Kind(rawValue: raw),
+              let sessionId = message["sessionId"] as? String else { return }
+        if voice, sessionId == focused { return }
+        let project = message["project"] as? String ?? ""
+        let line: String
+        switch kind {
+        case .done:
+            guard message["long"] as? Bool ?? false else { return }
+            line = Notice.doneLine(project: project, seconds: message["seconds"] as? Int ?? 0)
+        case .progress, .stuck:
+            line = message["line"] as? String ?? ""
+        }
+        guard !line.isEmpty else { return }
+        // Nothing covers a stuck agent's line while it's still being read.
+        if let current = notice, current.attention, kind != .stuck { return }
+        let next = Notice(sessionId: sessionId, project: project, line: line, kind: kind)
         notice = next
+        if kind != .progress { chime(kind == .done ? .done : .attention) }
         noticeTimer?.cancel()
         noticeTimer = Task { @MainActor [weak self] in
             try? await Task.sleep(for: next.lifetime)
@@ -318,6 +342,20 @@ final class AgentState: ObservableObject {
             self?.notice = nil
             self?.settle()
         }
+    }
+
+    enum Chime: String {
+        case done = "Glass", attention = "Ping"
+    }
+
+    /// Voice speaks news out loud; typing only, a system sound stands in for it.
+    /// Set `sounds` in settings.json to turn it on or off either way.
+    var lastChime: Chime?
+    private var approvalsLoaded = false
+    private func chime(_ sound: Chime) {
+        guard Settings.sounds(voice: voice) else { return }
+        lastChime = sound
+        NSSound(named: NSSound.Name(sound.rawValue))?.play()
     }
 
     func dismissNotice() {
@@ -344,6 +382,7 @@ final class AgentState: ObservableObject {
     }
     /// The agents daemon dropped: empty the roster rather than show a frozen one.
     func clearRoster() {
+        approvalsLoaded = false
         agents = []
         approvals = []
         rosterDegraded = false
