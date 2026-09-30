@@ -222,9 +222,14 @@ struct NotchView: View {
                 FleetLine(totals: totals)
             }
 
+            if state.addingAgent {
+                NewAgentField(state: state)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
             HStack(spacing: 10) {
-                Button(action: newAgent) {
-                    Text("+ agent")
+                Button(action: toggleNewAgent) {
+                    Text(state.addingAgent ? "cancel" : "+ agent")
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 10).padding(.vertical, 4)
                         .background(Capsule().fill(Color(white: 0.18)))
@@ -275,10 +280,89 @@ struct NotchView: View {
         return state.voice ? "hold \(PushToTalk.key.label) to talk · ⌃⌥T to type" : "⌃⌥T to type"
     }
 
-    private func newAgent() {
-        guard let path = PathPrompt.ask() else { return }
-        state.startAgent(in: path)
-        state.panel = .agents
+    private func toggleNewAgent() {
+        if state.addingAgent {
+            state.cancelNewAgent()
+        } else {
+            state.requestNewAgent()
+        }
+    }
+}
+
+/// "+ agent", inline: a path with the folders that finish it underneath.
+/// Return starts it, tab takes the first suggestion, esc closes it.
+private struct NewAgentField: View {
+    @ObservedObject var state: AgentState
+    @State private var text = AgentPath.initial
+    @State private var problem: String?
+    @FocusState private var focused: Bool
+
+    private var suggestions: [String] { AgentPath.suggestions(for: text) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Text("+")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.7))
+                TextField("", text: $text, prompt: Text("a folder for the new agent").foregroundStyle(Color(white: 0.32)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.9))
+                    .focused($focused)
+                    .onSubmit(submit)
+                    .onExitCommand { state.cancelNewAgent() }
+                    .onKeyPress(.tab) {
+                        guard let first = suggestions.first else { return .ignored }
+                        text = first
+                        return .handled
+                    }
+                    .onChange(of: text) { _, _ in problem = nil }
+                Button("start", action: submit)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.85))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(white: 0.12))
+                    .strokeBorder(Color(white: problem == nil ? 0.26 : 0.4), lineWidth: 1)
+            )
+
+            if let problem {
+                Text(problem)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(AgentPhase.error.tint)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            } else if !suggestions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(suggestions, id: \.self) { suggestion in
+                        Text((suggestion as NSString).lastPathComponent)
+                            .font(.system(size: 9, design: .monospaced))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Capsule().fill(Color(white: 0.14)))
+                            .foregroundStyle(Color(white: 0.7))
+                            .lineLimit(1)
+                            .onTapGesture {
+                                text = suggestion
+                                focused = true
+                            }
+                    }
+                }
+            }
+        }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onChange(of: state.newAgentRequest) { _, _ in DispatchQueue.main.async { focused = true } }
+        .onChange(of: state.composeDismiss) { _, _ in focused = false }
+        .onChange(of: focused) { _, value in state.composing = value }
+        .onDisappear { state.composing = false }
+    }
+
+    private func submit() {
+        problem = state.submitNewAgent(text)
     }
 }
 

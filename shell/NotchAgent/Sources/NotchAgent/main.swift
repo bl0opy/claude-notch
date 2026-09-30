@@ -86,7 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // The notch takes the keyboard only while you're typing in it; done,
         // it goes back to whatever app you were in.
+        // Debounced: moving from one field in the notch to the other is a
+        // blur then a focus, and isn't done typing.
         state.$composing
+            .debounce(for: .milliseconds(120), scheduler: RunLoop.main)
             .removeDuplicates()
             .sink { [weak self] composing in
                 guard !composing, let window = self?.window, window.isKeyWindow,
@@ -215,8 +218,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newAgent() {
-        guard let path = PathPrompt.ask() else { return }
-        state.startAgent(in: path)
+        window?.makeKey()
+        state.requestNewAgent()
     }
 }
 

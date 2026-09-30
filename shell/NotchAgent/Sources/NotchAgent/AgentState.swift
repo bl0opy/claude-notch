@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SwiftUI
 
 enum AgentPhase: String {
@@ -107,9 +107,13 @@ final class AgentState: ObservableObject {
     @Published var notice: Notice?
     private var noticeTimer: Task<Void, Never>?
 
-    /// True while the compose field has the keyboard: the panel stays open
-    /// with the cursor elsewhere, since you're mid-sentence.
+    /// True while a field in the notch has the keyboard — the compose line or
+    /// the new-agent path: the panel stays open with the cursor elsewhere,
+    /// since you're mid-sentence.
     @Published var composing: Bool = false
+    /// The agents tab's inline "+ agent" path field is open.
+    @Published var addingAgent: Bool = false
+    @Published var newAgentRequest: Int = 0
     /// Bumped to pull the keyboard into the compose field (⌃⌥T), and to let
     /// go of it when the notch stops being the key window.
     @Published var composeRequest: Int = 0
@@ -356,6 +360,29 @@ final class AgentState: ObservableObject {
     func startAgent(in cwd: String) {
         fleet?.send(["type": "spawn", "cwd": cwd])
     }
+
+    /// Open the inline path field on the agents tab (+ agent, ◎ → New agent…).
+    func requestNewAgent() {
+        takeKeyboard()
+        panel = .agents
+        addingAgent = true
+        composing = true
+        newAgentRequest += 1
+    }
+
+    /// What's typed in the path field: started, or why not.
+    func submitNewAgent(_ typed: String) -> String? {
+        let path = AgentPath.resolve(typed)
+        guard AgentPath.isDirectory(path) else { return "no folder at \(path)" }
+        guard rosterConnected else { return "the agents daemon isn't running" }
+        startAgent(in: path)
+        addingAgent = false
+        return nil
+    }
+
+    func cancelNewAgent() {
+        addingAgent = false
+    }
     func setTalking(_ down: Bool) {
         micOpen = down
         client?.send(["type": "ptt", "down": down])
@@ -406,7 +433,14 @@ final class AgentState: ObservableObject {
         }
     }
 
+    /// The notch never activates the app, so a field in it only gets keys
+    /// once its window is made key by hand.
+    private func takeKeyboard() {
+        NSApp.windows.first { $0 is NotchWindow }?.makeKey()
+    }
+
     func requestCompose() {
+        takeKeyboard()
         panel = .focus
         composing = true
         composeRequest += 1
