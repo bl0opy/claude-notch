@@ -266,18 +266,16 @@ for comparing sessions, not a bill.
 
 ### Starting an agent
 
-**+ agent** on the dashboard (or *New agent…* in the menu bar item) asks for a
-path and has the agents daemon start `claude` there in a pty of its own. The
-terminal window opens on it: the full Claude Code interface, typed into as
-usual, with no Terminal.app window behind it.
+**+ agent** on the agents tab (or *New agent…* in the menu bar item) opens a
+path field right there in the notch, and the agents daemon starts `claude` in
+a pty of its own. The terminal window opens on it: the full Claude Code
+interface, typed into as usual, with no Terminal.app window behind it.
 
-<p align="center">
-  <img src="docs/path-prompt.png" width="412" alt="The Start agent prompt, filled in with the default path">
-</p>
-
-It starts filled in with `default_agent_path` from `settings.json`. A bare name
-like `bus-tracker` is taken relative to it; `~` and absolute paths work too. A
-path that isn't a directory keeps the prompt open and says so.
+The field starts with `default_agent_path` from `settings.json`, and the
+folders that finish what you've typed sit under it — click one, or tab for the
+first. A bare name like `bus-tracker` is taken relative to the default; `~` and
+absolute paths work too. ↩ starts it; a path that isn't a folder says so in
+place; esc closes it.
 
 ```json
 { "default_agent_path": "~/code" }
@@ -287,7 +285,7 @@ The terminal window's path box uses the same setting: `bus-tracker` there starts
 in `<default_agent_path>/bus-tracker`.
 
 `settings.json` is yours and gitignored; `run.sh` copies it from
-`settings.example.json` the first time. It's read each time you open the prompt,
+`settings.example.json` the first time. It's read each time you open the field,
 so edits apply without a restart.
 
 ### The terminal window
@@ -409,7 +407,12 @@ counts as a bare answer, so "ok but first rename it" still goes to the agent.
 
 Out loud you hear "orbit wants to push to git" when a question arrives and
 "orbit is done" when a turn of 30 s or more finishes somewhere you aren't
-focused. Several at once are said together, never while you're holding the key
+focused. The notch shows the same turn ending as a line ("done after 5
+minutes"), and with voice off a system sound stands in for the voice — for new
+questions and stuck agents too (`sounds` in settings.json). A turn's end is
+seen from the roster going from working to idle, so it works for every
+session, hook or not; where the Stop hook is installed it's heard a tick
+sooner, and the two are told once. Several at once are said together, never while you're holding the key
 or it's already talking, and a question answered before it gets a word in isn't
 said at all.
 
@@ -499,6 +502,7 @@ Two files, both optional and both gitignored:
   | `talk_key` | `rightOption` | The push-to-talk key; `PTT_KEY` overrides it |
   | `default_agent_path` | `~` | Where new agents start; bare names are relative to it |
   | `notch_fold_after` | `300` | Seconds of quiet before the pill folds away; 0 keeps it up |
+  | `sounds` | on when voice is off | A system sound for new questions, stuck agents and long turns ending |
 - **`.env`** — the backend's and daemon's environment. Anything below can also
   be set in the shell environment instead.
 
@@ -588,6 +592,17 @@ Mock backends, so the shell can be worked on without a mic, models or agents:
 .venv/bin/python scripts/mock_agents.py                     # fake roster and questions on :8767
 MOCK_SCENE=cycle .venv/bin/python scripts/mock_agents.py    # questions → working → idle every 40 s
 MOCK_SCENE=supervisor .venv/bin/python scripts/mock_agents.py  # the supervisor's popups
+MOCK_SCENE=notify .venv/bin/python scripts/mock_agents.py   # done, new question, stuck, short done, every 8 s
+```
+
+The mock daemon also answers typed lines (`typed`) and `+ agent` (a new hosted
+row), so the compose field and the inline path field can be tried against it.
+
+The notch's own tests, and renders of each of its states:
+
+```bash
+cd shell/NotchAgent && swift test                               # approvals, notices, island modes, typing, new agents
+SNAPSHOT_DIR=/tmp/notch swift test --filter SnapshotTests       # PNGs of the pill, notices, cards, focus, agents
 ```
 
 The screenshots above are the real shell against these two.
@@ -605,6 +620,8 @@ Smoke tests, no audio or API keys needed:
 .venv/bin/python scripts/tail_smoke.py        # a foreign agent's answer is what gets spoken
 .venv/bin/python scripts/window_smoke.py      # hosted ptys: typing, resize, replay, exit, origin check
 .venv/bin/python scripts/supervisor_smoke.py  # every stuck rule, progress lines, dedupe (--live asks Haiku why)
+.venv/bin/python scripts/turns_smoke.py       # a turn's end from the roster and the Stop hook, said once
+.venv/bin/python scripts/type_smoke.py        # typing to a terminal session through the daemon, no voice
 ```
 
 The manual test checklist and troubleshooting table are in [SETUP.md](SETUP.md).
@@ -707,6 +724,7 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | `agentsd/usage.py` | Tokens, what they'd cost at API rates, how full a window is |
 | `agentsd/supervisor.py` | Watches unfocused agents: progress lines, stuck rules, the Haiku explainer |
 | `agentsd/pty_host.py` | Runs hosted sessions in ptys the daemon owns |
+| `agentsd/turns.py` | When a turn ends: the roster and the Stop hook, told once |
 | `agentsd/window.py` | Serves the terminal window's page and a socket per pty |
 | **`window/`** | **The terminal window's page (xterm.js vendored under `vendor/`)** |
 | **`hooks/`** | |
@@ -714,7 +732,7 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | **`shell/NotchAgent/`** | **SwiftUI app (SPM executable)** |
 | `.../NotchView.swift` | The panel: focus and agents tabs, cards, roster |
 | `.../PushToTalk.swift` | Global key watcher: right ⌥ opens the mic |
-| `.../PathPrompt.swift` | The path prompt behind `+ agent` |
+| `.../AgentPath.swift` | Resolves and completes the `+ agent` path |
 | `.../Settings.swift` | Reads and writes `settings.json`; the ports |
 | `.../SettingsWindow.swift` | ◎ → Settings… |
 | `.../Jump.swift` | Brings a session's terminal to the front |
