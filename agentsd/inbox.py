@@ -25,9 +25,8 @@ from loguru import logger
 from agentsd import risk
 from agentsd.registry import from_registry
 from agentsd.snapshot import project_name
+from agentsd.turns import DONE_AFTER_S
 
-# A turn this long is worth "done" out loud; anything shorter you were watching.
-DONE_AFTER_S = 30
 
 
 @dataclass

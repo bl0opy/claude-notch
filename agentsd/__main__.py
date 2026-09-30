@@ -19,6 +19,7 @@ from agentsd.registry import live_sessions
 from agentsd.snapshot import build
 from agentsd.supervisor import Supervisor
 from agentsd.transcripts import Transcripts
+from agentsd.turns import TurnEnds
 from agentsd.window import WindowServer, page_origins
 from backend.bridge import NotchBridge
 
@@ -47,10 +48,18 @@ async def serve():
     window = WindowServer(
         config.ws_host, config.window_port, pty, f"ws://{config.ws_host}:{config.ws_port}"
     )
+    turn_ends = TurnEnds()
+
+    async def announce(message: dict):
+        # The Stop hook's "done" and the roster's are one turn; say it once.
+        message = turn_ends.filter(message)
+        if message:
+            await bridge.send(message)
+
     inbox = Inbox(
         config.ws_host,
         config.inbox_port,
-        bridge.send,
+        announce,
         owned_timeout_s=config.owned_timeout_s,
         terminal_timeout_s=config.terminal_timeout_s,
     )
@@ -168,6 +177,8 @@ async def serve():
             if last is None or snapshot["list"] != last["list"] or snapshot["degraded"] != last["degraded"]:
                 await bridge.send(snapshot)
                 last = snapshot
+            for event in turn_ends.update(snapshot["list"]):
+                await bridge.send(event)
             await inbox.reconcile()
             await deliver_held()
             try:
