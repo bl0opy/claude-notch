@@ -3,7 +3,10 @@ import asyncio, json, os, random, time, websockets
 
 # MOCK_SCENE: "demo" (default) keeps questions up; "cycle" walks through
 # questions -> working -> all idle, to watch the island expand, shrink and fold;
-# "supervisor" alternates the supervisor's progress and stuck popups every 12 s.
+# "supervisor" alternates the supervisor's progress and stuck popups every 12 s;
+# "notify" walks the notch's news every 8 s: a long turn finishing, a new
+# permission question, a stuck agent, and a short turn finishing (which should
+# stay quiet). Typed lines, "+ agent" and approvals are answered in every scene.
 SCENE = os.getenv("MOCK_SCENE", "demo")
 START = time.time()
 
@@ -79,10 +82,27 @@ def snapshot(tick):
 async def listen(ws):
     async for raw in ws:
         msg = json.loads(raw)
-        print("got", msg)
-        if msg.get("type") == "approve":
+        print("got", msg, flush=True)
+        kind = msg.get("type")
+        if kind == "approve":
             APPROVALS[:] = [a for a in APPROVALS if a["id"] != msg.get("id")]
             await ws.send(json.dumps(approvals()))
+        elif kind == "type":
+            row = next((r for r in ROWS if r["id"] == msg.get("id")), None)
+            status = "gone" if not row else "waiting" if row["state"] == "waiting" else (
+                ("steered" if msg.get("steer") else "sent") if row.get("host") == "window"
+                else "queued" if row["state"] == "working" else "sent")
+            await ws.send(json.dumps({"type": "typed", "id": msg.get("id"), "status": status, "detail": ""}))
+        elif kind == "spawn":
+            # A hosted row appears, the way the real daemon's would; there's no
+            # pty behind it, so no "spawned" to open a window on.
+            cwd = msg.get("cwd") or "/tmp"
+            ROWS.append({"id": f"h{len(ROWS)}", "pid": 900 + len(ROWS), "tty": "", "host": "window",
+                         "name": os.path.basename(cwd), "project": os.path.basename(cwd) or cwd, "cwd": cwd,
+                         "branch": "main", "state": "working", "waitingFor": "", "reachable": True,
+                         "owned": True, "model": "claude-sonnet-5", "activity": "", "activityDetail": "",
+                         "subagents": {"total": 0, "active": 0},
+                         "tokens": {"in": 0, "out": 0, "cache_read": 0, "cache_write": 0, "thinking": 0}})
 
 
 SUPERVISOR_LINES = [
@@ -91,6 +111,29 @@ SUPERVISOR_LINES = [
     {"event": "stuck", "sessionId": "c3", "project": "wound-stage", "level": "attention", "reason": "failing",
      "line": "wound-stage looks stuck: it keeps rerunning the same test without fixing the missing import it trips on."},
 ]
+
+
+NOTIFY_STEPS = [
+    {"type": "fleet_event", "event": "done", "sessionId": "c3", "project": "wound-stage", "long": True, "seconds": 312},
+    "question",
+    {"type": "fleet_event", "event": "stuck", "sessionId": "d4", "project": "multiplayer-piano", "level": "attention",
+     "reason": "looping", "speak": True,
+     "line": "multiplayer-piano looks stuck: it keeps reading the same socket file without changing anything."},
+    {"type": "fleet_event", "event": "done", "sessionId": "a1", "project": "voice-agent", "long": False, "seconds": 6},
+]
+
+
+async def notify_step(ws, n):
+    step = NOTIFY_STEPS[n % len(NOTIFY_STEPS)]
+    if step == "question":
+        APPROVALS.append({"id": f"n{n}", "source": "terminal", "sessionId": "b2", "pid": 102,
+                          "project": "descant-ide", "cwd": "/tmp", "tool": "Bash", "detail": "rm -rf build/",
+                          "summary": "delete build", "risky": True, "canAlways": False,
+                          "created": int(time.time() * 1000)})
+        await ws.send(json.dumps(approvals()))
+    else:
+        await ws.send(json.dumps(step))
+    print("notify:", step if step == "question" else f"{step['event']} {step['project']}", flush=True)
 
 
 async def handler(ws):
@@ -104,6 +147,8 @@ async def handler(ws):
                 shown = approvals() if cycle_phase() == "questions" else {"type": "approvals", "list": []}
                 await ws.send(json.dumps(shown))
             await ws.send(json.dumps(snapshot(tick)))
+            if SCENE == "notify" and tick % 8 == 3:
+                await notify_step(ws, tick // 8)
             if SCENE == "supervisor" and tick % 12 == 2:
                 event = SUPERVISOR_LINES[(tick // 12) % len(SUPERVISOR_LINES)]
                 await ws.send(json.dumps({"type": "fleet_event", "speak": True, **event}))
