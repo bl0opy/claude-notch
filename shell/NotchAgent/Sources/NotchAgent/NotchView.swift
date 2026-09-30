@@ -183,7 +183,7 @@ struct NotchView: View {
         if state.micOpen { return "listening…" }
         if state.voice { return "hold \(PushToTalk.key.label) and say something, or type below" }
         if state.target == nil { return "no agents yet — + agent on the agents tab starts one" }
-        return "type below to message it · click a row on the agents tab to pick another"
+        return "type below · pick another agent on the agents tab"
     }
 
     /// Every claude session on the machine, and the button that adds one.
@@ -272,6 +272,7 @@ struct NotchView: View {
 
     private var footerHint: String {
         if state.micOpen { return "listening — one turn until you let go" }
+        if state.addingAgent { return "↩ start · tab completes · esc cancels" }
         if state.composing { return "↩ send · ⌘↩ steer · esc done" }
         return state.voice ? "hold \(PushToTalk.key.label) to talk · ⌃⌥T to type" : "⌃⌥T to type"
     }
