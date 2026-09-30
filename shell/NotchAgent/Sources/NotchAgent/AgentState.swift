@@ -164,6 +164,13 @@ final class AgentState: ObservableObject {
     /// Claw'd without the panel covering what you're doing.
     var expanded: Bool { hovering || micOpen || lingering || composing }
 
+    /// What the island is showing: folded away, the pill, a notice, or the panel.
+    var islandMode: IslandMode {
+        if expanded { return .expanded }
+        if notice != nil { return .notice }
+        return dormant ? .dormant : .compact
+    }
+
     /// After the talk key comes up the panel stays open through the reply and
     /// a few seconds past it, so you can read what it heard and what it said.
     @Published private(set) var lingering = false
@@ -227,11 +234,11 @@ final class AgentState: ObservableObject {
     /// The one ⌃⌥Y / ⌃⌥N / ⌃⌥J act on.
     var topApproval: ApprovalRequest? { approvals.first }
 
-    private var client: BridgeClient?
+    private var client: MessageSink?
     /// The agents daemon holds the approvals, so answers go there, not to the voice backend.
-    private var fleet: BridgeClient?
+    private var fleet: MessageSink?
 
-    func attach(_ client: BridgeClient, fleet: BridgeClient) {
+    func attach(_ client: MessageSink, fleet: MessageSink) {
         self.client = client
         self.fleet = fleet
     }
@@ -350,12 +357,11 @@ final class AgentState: ObservableObject {
 
     /// Voice speaks news out loud; typing only, a system sound stands in for it.
     /// Set `sounds` in settings.json to turn it on or off either way.
-    var lastChime: Chime?
+    var play: (Chime) -> Void = { NSSound(named: NSSound.Name($0.rawValue))?.play() }
     private var approvalsLoaded = false
     private func chime(_ sound: Chime) {
         guard Settings.sounds(voice: voice) else { return }
-        lastChime = sound
-        NSSound(named: NSSound.Name(sound.rawValue))?.play()
+        play(sound)
     }
 
     func dismissNotice() {
@@ -475,7 +481,7 @@ final class AgentState: ObservableObject {
     /// The notch never activates the app, so a field in it only gets keys
     /// once its window is made key by hand.
     private func takeKeyboard() {
-        NSApp.windows.first { $0 is NotchWindow }?.makeKey()
+        NSApp?.windows.first { $0 is NotchWindow }?.makeKey()
     }
 
     func requestCompose() {

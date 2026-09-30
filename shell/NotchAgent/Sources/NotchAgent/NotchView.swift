@@ -17,11 +17,7 @@ struct NotchView: View {
     let geometry: NotchGeometry
     var onIslandFrame: (CGRect) -> Void = { _ in }
 
-    private var mode: IslandMode {
-        if state.expanded { return .expanded }
-        if state.notice != nil { return .notice }
-        return state.dormant ? .dormant : .compact
-    }
+    private var mode: IslandMode { state.islandMode }
 
     private var stripHeight: CGFloat { max(geometry.notchHeight, 26) }
 

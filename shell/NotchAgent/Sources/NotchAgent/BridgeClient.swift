@@ -1,9 +1,15 @@
 import Foundation
 
+/// Somewhere the notch sends messages: a socket, or a recorder in the tests.
+@MainActor
+protocol MessageSink: AnyObject {
+    func send(_ payload: [String: Any])
+}
+
 /// Talks to the Python backend over ws://127.0.0.1:8765, reconnecting on its own
 /// so a backend restart never takes the notch down with it.
 @MainActor
-final class BridgeClient {
+final class BridgeClient: MessageSink {
     private let url: URL
     private var task: URLSessionWebSocketTask?
     private var session: URLSession!
