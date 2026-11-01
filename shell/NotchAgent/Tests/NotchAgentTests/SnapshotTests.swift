@@ -82,12 +82,32 @@ final class SnapshotTests: XCTestCase {
         try render("5-typing-focus", state)
     }
 
-    func testAgentsWithNewAgentField() throws {
-        let (state, _, _) = makeState(["voice": false, "default_agent_path": "~"])
+    func testQuestionDropsDown() throws {
+        let (state, _, _) = makeState(["voice": false])
         state.apply(roster)
+        var push = approvalRow("q1", session: "orbit", project: "orbit",
+                               why: "The fix is committed on main. Pushing it so the TestFlight build picks it up.",
+                               always: "Bash(git push origin main)")
+        push["detail"] = "git push origin main"
+        state.apply(["type": "approvals", "list": [push, approvalRow("q2", session: "bus-tracker", project: "bus-tracker")]])
+        try render("6-question", state)
+    }
+
+    func testDesktopSessionPanel() throws {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [
+            desktopRow("presently", state: "idle", title: "TestFlight update", summary: "added the 1.5.0 notes; pushed b204d20"),
+            desktopRow("voice-agent", state: "working", title: "Notch Agent"),
+        ]])
+        state.focus("presently")
+        state.apply(["type": "chat", "id": "presently", "rows": [
+            ["role": "you", "text": "add the what's new notes and push"],
+            ["role": "tool", "text": "Edit(Presently/WhatsNew.swift)"],
+            ["role": "tool", "text": "Bash(git push origin main)"],
+            ["role": "claude", "text": "Added the 1.5.0 entry and pushed b204d20."],
+        ]])
         state.hovering = true
-        state.requestNewAgent()
-        try render("6-agents-new-agent", state)
+        try render("8-desktop-panel", state)
     }
 
     func testVoiceFocusEmpty() throws {

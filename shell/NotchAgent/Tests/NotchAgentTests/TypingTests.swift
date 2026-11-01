@@ -112,7 +112,6 @@ final class NewAgentTests: XCTestCase {
         let (state, _, fleet) = makeState(["default_agent_path": root!])
         state.requestNewAgent()
         XCTAssertTrue(state.addingAgent)
-        XCTAssertEqual(state.panel, .agents)
         XCTAssertTrue(state.composing, "the panel holds open while you type the path")
         XCTAssertNil(state.submitNewAgent("orbit"))
         XCTAssertEqual(fleet.types, ["spawn"])

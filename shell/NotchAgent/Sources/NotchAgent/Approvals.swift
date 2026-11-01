@@ -20,6 +20,10 @@ struct ApprovalRequest: Identifiable, Equatable {
     let risky: Bool
     /// Claude Code offered a rule for it, so "always" is possible.
     let canAlways: Bool
+    /// The rule "always" adds, as Claude Code writes it: `Bash(npm test:*)`.
+    let always: String
+    /// What the agent said before asking, or what it was asked.
+    let why: String
     let created: Date
 
     init?(_ raw: [String: Any]) {
@@ -34,6 +38,8 @@ struct ApprovalRequest: Identifiable, Equatable {
         summary = raw["summary"] as? String ?? ""
         risky = raw["risky"] as? Bool ?? false
         canAlways = raw["canAlways"] as? Bool ?? false
+        always = raw["always"] as? String ?? ""
+        why = raw["why"] as? String ?? ""
         created = Date(timeIntervalSince1970: (raw["created"] as? Double ?? 0) / 1000)
     }
 

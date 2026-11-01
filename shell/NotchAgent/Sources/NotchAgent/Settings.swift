@@ -52,6 +52,12 @@ enum Settings {
         (load()["talk_key"] as? String) ?? ""
     }
 
+    /// Starting agents from the notch, and the terminal window they run in.
+    /// Off by default: the notch watches the sessions you already run.
+    static var hostedAgents: Bool {
+        (load()["hosted_agents"] as? Bool) ?? false
+    }
+
     /// Where "New agent…" starts you off. Home if it isn't set.
     static var defaultAgentPath: String {
         (load()["default_agent_path"] as? String) ?? "~"

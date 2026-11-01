@@ -27,10 +27,15 @@ func agentRow(_ id: String, state: String = "idle", project: String? = nil, host
 }
 
 func approvalRow(_ id: String, session: String = "s1", project: String = "orbit", risky: Bool = false,
-                 canAlways: Bool = true) -> [String: Any] {
+                 canAlways: Bool = true, why: String = "", always: String = "") -> [String: Any] {
     ["id": id, "source": "terminal", "sessionId": session, "pid": 0, "project": project, "tool": "Bash",
      "detail": "git push", "summary": "push to git", "risky": risky, "canAlways": canAlways,
-     "created": Date().timeIntervalSince1970 * 1000]
+     "why": why, "always": always, "created": Date().timeIntervalSince1970 * 1000]
+}
+
+func desktopRow(_ id: String, state: String = "idle", title: String = "", summary: String = "") -> [String: Any] {
+    ["id": id, "project": id, "state": state, "host": "desktop", "pid": 0, "branch": "main",
+     "reachable": true, "title": title, "summary": summary, "link": "claude://code/continue?session=local_\(id)"]
 }
 
 @MainActor

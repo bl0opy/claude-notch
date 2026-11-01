@@ -5,7 +5,6 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NotchWindow?
-    private var statusItem: NSStatusItem?
     private let state = AgentState()
     private var client: BridgeClient!
     private var agentsClient: BridgeClient!
@@ -16,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        TerminalWindow.installMenu()
+        if state.hostedAgents { TerminalWindow.installMenu() }
 
         let geometry = NotchGeometry.current()
         let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
@@ -64,7 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentsClient.connect()
 
         state.startClock()
-        installStatusItem()
         installHotKey()
 
         if state.voice {
@@ -74,7 +72,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .sink { [weak self] _ in
                     guard let self, PushToTalk.Key.configured != PushToTalk.key else { return }
                     self.pushToTalk.reload()
-                    self.installStatusItem()
                 }
                 .store(in: &watchers)
         }
@@ -126,46 +123,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mouse?.uninstall()
     }
 
-    private func installStatusItem() {
-        if let statusItem { NSStatusBar.system.removeStatusItem(statusItem) }
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "◎"
-        let menu = NSMenu()
-        if state.voice {
-            menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
-        }
-        menu.addItem(
-            withTitle: "Type to an agent (⌃⌥T)", action: #selector(compose), keyEquivalent: ""
-        ).target = self
-        menu.addItem(
-            withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
-        ).target = self
-        menu.addItem(withTitle: "Allow / deny oldest (⌃⌥Y / ⌃⌥N)", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Show its terminal (⌃⌥J)", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Agents dashboard", action: #selector(showAgents), keyEquivalent: ""
-        ).target = self
-        menu.addItem(
-            withTitle: "Terminal window", action: #selector(showTerminals), keyEquivalent: ""
-        ).target = self
-        menu.addItem(
-            withTitle: "New agent…", action: #selector(newAgent), keyEquivalent: ""
-        ).target = self
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ","
-        ).target = self
-        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        item.menu = menu
-        statusItem = item
-    }
-
     /// Keys that work from any app. Needs Accessibility permission.
     ///
     /// - ⌥Space: shut it up.
     /// - ⌃⌥Y / ⌃⌥N: allow or deny the oldest open question.
-    /// - ⌃⌥J: show the terminal it came from.
+    /// - ⌃⌥J: show the session it came from: its tab in the app, or its terminal.
     /// - ⌃⌥T: type to the focused agent.
     ///
     /// Global monitors can't swallow a key, so the approval keys use ⌃⌥ — nothing
@@ -201,25 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.requestCompose()
     }
 
-    @objc private func showSettings() {
-        SettingsWindow.shared.show()
-    }
-
     @objc private func interrupt() {
         state.interrupt()
-    }
-
-    @objc private func showAgents() {
-        state.show(.agents)
-    }
-
-    @objc private func showTerminals() {
-        TerminalWindow.shared.show()
-    }
-
-    @objc private func newAgent() {
-        window?.makeKey()
-        state.requestNewAgent()
     }
 }
 

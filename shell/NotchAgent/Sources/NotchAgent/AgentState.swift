@@ -64,16 +64,13 @@ struct Notice: Identifiable, Equatable {
     }
 }
 
-/// The panel shows one thing at a time: the agent you're talking to, or all of them.
-enum PanelMode: String {
-    case focus, agents
-}
-
 @MainActor
 final class AgentState: ObservableObject {
     /// Voice in and out, from settings.json at launch. Off, there's no voice
     /// backend and the notch is typed to.
     let voice = Settings.voice
+    /// Agents started from the notch, in its own terminal window. Read at launch.
+    let hostedAgents = Settings.hostedAgents
     @Published var phase: AgentPhase = Settings.voice ? .disconnected : .idle
     @Published var userTranscript: String = ""
     @Published var assistantText: String = ""
@@ -107,11 +104,8 @@ final class AgentState: ObservableObject {
     /// The one that hears the mic and speaks. nil = the voice agent's own session.
     @Published var focused: String?
     @Published var rosterDegraded: Bool = false
-    @Published var fleetTotals: FleetTotals? = nil
     /// Sessions the voice backend started, which is what makes them interruptible.
     @Published var ownedIds: Set<String> = []
-    /// Which half of the panel is showing.
-    @Published var panel: PanelMode = .focus
     /// Whether the agents daemon is answering at all, which is a different thing
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
@@ -130,6 +124,12 @@ final class AgentState: ObservableObject {
     /// go of it when the notch stops being the key window.
     @Published var composeRequest: Int = 0
     @Published var composeDismiss: Int = 0
+    /// The target session's conversation so far, refreshed while the panel is open.
+    @Published var chat: [ChatRow] = []
+    @Published var chatFor: String?
+    private var chatAsked = Date.distantPast
+    private static let chatEvery: TimeInterval = 2
+
     /// What became of the last typed line, while it's worth showing.
     @Published var typedStatus: String = ""
     private var typedTarget: String?
@@ -164,9 +164,11 @@ final class AgentState: ObservableObject {
     /// Claw'd without the panel covering what you're doing.
     var expanded: Bool { hovering || micOpen || lingering || composing }
 
-    /// What the island is showing: folded away, the pill, a notice, or the panel.
+    /// What the island is showing: folded away, the pill, a notice, a
+    /// question, or the panel. A question you haven't hidden outranks a notice.
     var islandMode: IslandMode {
         if expanded { return .expanded }
+        if !unseenApprovals.isEmpty { return .question }
         if notice != nil { return .notice }
         return dormant ? .dormant : .compact
     }
@@ -218,6 +220,8 @@ final class AgentState: ObservableObject {
         let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Settings.foldAfter
         if fold != dormant { dormant = fold }
 
+        if expanded, now.timeIntervalSince(chatAsked) >= Self.chatEvery { refreshChat() }
+
         if lingering {
             if micOpen || [.listening, .thinking, .speaking].contains(phase) {
                 quietSince = nil
@@ -263,7 +267,6 @@ final class AgentState: ObservableObject {
             if message["final"] as? Bool ?? true {
                 assistantText = ""
                 tools = []
-                panel = .focus
             }
         case "assistant_delta":
             assistantText += message["text"] as? String ?? ""
@@ -295,7 +298,6 @@ final class AgentState: ObservableObject {
                 ($0.state.rank, $0.project) < ($1.state.rank, $1.project)
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
-            fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
         case "fleet_event":
             post(message)
         case "typed":
@@ -303,7 +305,13 @@ final class AgentState: ObservableObject {
             showTyped(message["status"] as? String ?? "", detail: message["detail"] as? String ?? "")
         case "spawned":
             // A session the agents daemon just started (or resumed): show it.
-            if let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
+            if Settings.hostedAgents, let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
+        case "chat":
+            guard let id = message["id"] as? String, id == target?.id else { return }
+            let rows = message["rows"] as? [[String: Any]] ?? []
+            let next = rows.enumerated().compactMap { ChatRow($1, index: $0) }
+            if next != chat || chatFor != id { chat = next }
+            chatFor = id
         case "focus":
             focused = message["id"] as? String
         case "owned":
@@ -332,7 +340,10 @@ final class AgentState: ObservableObject {
         switch kind {
         case .done:
             guard message["long"] as? Bool ?? false else { return }
-            line = Notice.doneLine(project: project, seconds: message["seconds"] as? Int ?? 0)
+            let said = message["line"] as? String ?? ""
+            line = said.isEmpty
+                ? Notice.doneLine(project: project, seconds: message["seconds"] as? Int ?? 0)
+                : "Done: \(said)"
         case .progress, .stuck:
             line = message["line"] as? String ?? ""
         }
@@ -385,6 +396,19 @@ final class AgentState: ObservableObject {
     func focus(_ id: String) {
         focused = id
         client?.send(["type": "focus", "id": id])
+        refreshChat()
+    }
+
+    /// Ask the daemon for the target's conversation; the reply lands as `chat`.
+    func refreshChat() {
+        chatAsked = Date()
+        guard let id = target?.id else {
+            chat = []
+            chatFor = nil
+            return
+        }
+        if chatFor != id { chat = [] }
+        fleet?.send(["type": "chat", "id": id])
     }
     /// The agents daemon dropped: empty the roster rather than show a frozen one.
     func clearRoster() {
@@ -393,11 +417,6 @@ final class AgentState: ObservableObject {
         approvals = []
         rosterDegraded = false
         rosterConnected = false
-        fleetTotals = nil
-    }
-
-    func show(_ mode: PanelMode) {
-        panel = mode
     }
 
     /// Start Claude Code in a directory of your choosing, hosted by the agents
@@ -406,10 +425,9 @@ final class AgentState: ObservableObject {
         fleet?.send(["type": "spawn", "cwd": cwd])
     }
 
-    /// Open the inline path field on the agents tab (+ agent, ◎ → New agent…).
+    /// Open the inline path field for a new hosted agent (+ in the session row).
     func requestNewAgent() {
         takeKeyboard()
-        panel = .agents
         addingAgent = true
         composing = true
         newAgentRequest += 1
@@ -438,6 +456,16 @@ final class AgentState: ObservableObject {
         approvals.removeAll { $0.id == request.id }
     }
 
+    /// Neither yes nor no yet: the agent is told to explain itself and ask
+    /// again. Claude Code reads a deny's message and carries on with the turn.
+    static let askWhy = "The user hasn't decided yet and wants to know why first. "
+        + "In a sentence or two, say what this is for and what happens if it's skipped, then try it again."
+
+    func ask(_ request: ApprovalRequest) {
+        fleet?.send(["type": "approve", "id": request.id, "approved": false, "always": false, "how": Self.askWhy])
+        approvals.removeAll { $0.id == request.id }
+    }
+
     func snoozeApprovals() {
         snoozed.formUnion(approvals.map(\.id))
     }
@@ -447,7 +475,9 @@ final class AgentState: ObservableObject {
     }
 
     func jump(to agent: RemoteAgent) {
-        if agent.hosted {
+        if agent.desktop, let url = URL(string: agent.link) {
+            NSWorkspace.shared.open(url)
+        } else if agent.hosted {
             TerminalWindow.shared.show(session: agent.id)
         } else {
             Jump.to(host: agent.host, tty: agent.tty)
@@ -486,7 +516,6 @@ final class AgentState: ObservableObject {
 
     func requestCompose() {
         takeKeyboard()
-        panel = .focus
         composing = true
         composeRequest += 1
     }
