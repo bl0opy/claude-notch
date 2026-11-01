@@ -121,6 +121,17 @@ final class SnapshotTests: XCTestCase {
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("9-markdown.png"))
     }
 
+    func testMultipleChoiceDropsDown() throws {
+        let (state, _, _) = makeState(["voice": false])
+        var row = approvalRow("q1", session: "notch-test", project: "notch-test")
+        row["tool"] = "AskUserQuestion"
+        row["questions"] = [["question": "Which **color**?", "header": "Color", "multiSelect": false, "options": [
+            ["label": "Red", "description": "Warm, loud"], ["label": "Blue", "description": "Cool, calm"],
+        ]]]
+        state.apply(["type": "approvals", "list": [row]])
+        try render("10-multiple-choice", state)
+    }
+
     func testDesktopSessionPanel() throws {
         let (state, _, _) = makeState(["voice": false])
         state.apply(["type": "agents", "list": [

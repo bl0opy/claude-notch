@@ -303,6 +303,43 @@ final class CompanionTests: XCTestCase {
         XCTAssertTrue(played.isEmpty)
     }
 
+    private func questionRow(multi: Bool = false) -> [String: Any] {
+        var row = approvalRow("q1")
+        row["tool"] = "AskUserQuestion"
+        row["questions"] = [["question": "Which?", "header": "H", "multiSelect": multi,
+                             "options": [["label": "Red", "description": "warm"], ["label": "Blue"]]]]
+        return row
+    }
+
+    func testAQuestionsOptionsComeThrough() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "approvals", "list": [questionRow(multi: true)]])
+        let question = state.approvals[0].questions[0]
+        XCTAssertEqual(question.options.map(\.label), ["Red", "Blue"])
+        XCTAssertEqual(question.options[0].description, "warm")
+        XCTAssertTrue(question.multiSelect)
+        XCTAssertTrue(approvalRow("a")["questions"] == nil)
+    }
+
+    func testChoosingSendsTheAnswerAndTakesTheCardDown() {
+        let (state, _, fleet) = makeState(["voice": false])
+        state.apply(["type": "approvals", "list": [questionRow()]])
+        state.choose(state.approvals[0], answers: ["Which?": "Red"])
+        XCTAssertEqual(fleet.sent.last?["approved"] as? Bool, true)
+        XCTAssertEqual((fleet.sent.last?["answers"] as? [String: Any])?["Which?"] as? String, "Red")
+        XCTAssertTrue(state.approvals.isEmpty)
+    }
+
+    func testABareYesCantAnswerAQuestion() {
+        let (state, _, fleet) = makeState(["voice": false])
+        state.apply(["type": "approvals", "list": [questionRow()]])
+        state.answer(state.approvals[0], approved: true)
+        XCTAssertTrue(fleet.sent.isEmpty)
+        XCTAssertEqual(state.approvals.count, 1, "⌃⌥Y mustn't clear it with no choice made")
+        state.answer(state.approvals[0], approved: false)
+        XCTAssertEqual(fleet.types, ["approve"], "no still works")
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

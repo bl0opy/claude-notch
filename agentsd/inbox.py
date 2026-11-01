@@ -30,6 +30,11 @@ from agentsd.turns import DONE_AFTER_S
 
 
 
+# Claude's own multiple-choice question. It isn't asking to be allowed: allowing it
+# without a choice leaves it waiting, so it only takes answers, or a no.
+QUESTION_TOOL = "AskUserQuestion"
+
+
 @dataclass
 class Pending:
     id: str
@@ -67,6 +72,7 @@ class Pending:
             "why": self.why,
             "explanation": self.explanation,
             "explaining": self.explaining,
+            "questions": (self.input.get("questions") or []) if self.tool == QUESTION_TOOL else [],
             "created": int(self.created * 1000),
         }
 
@@ -141,12 +147,17 @@ class Inbox:
     async def _changed(self):
         await self._broadcast(self.snapshot())
 
-    def answer(self, req_id: str, approved: bool, always: bool = False, how: str = "") -> bool:
+    def answer(self, req_id: str, approved: bool, always: bool = False, how: str = "",
+               answers: dict | None = None) -> bool:
         pending = self._pending.get(req_id)
         if not pending:
             return False
+        if approved and pending.tool == QUESTION_TOOL and not answers:
+            logger.info("a yes to a question with no choice in it was ignored")
+            return False
         decision = "allow" if approved else "deny"
-        self._settle(pending, decision, how, always=always and approved)
+        self._settle(pending, decision, how, always=always and approved,
+                     updated_input={**pending.input, "answers": answers} if answers and approved else None)
         logger.info(f"{decision}{' always' if always else ''} {pending.tool} for {project_name(pending.cwd)} {how}")
         return True
 
@@ -165,9 +176,13 @@ class Inbox:
         if req_id in self._pending:
             await self._changed()
 
-    def _settle(self, pending: Pending, decision: str, reason: str, always: bool = False):
+    def _settle(self, pending: Pending, decision: str, reason: str, always: bool = False,
+                updated_input: dict | None = None):
         if pending.future and not pending.future.done():
-            pending.future.set_result({"decision": decision, "reason": reason, "always": always})
+            result = {"decision": decision, "reason": reason, "always": always}
+            if updated_input:
+                result["updatedInput"] = updated_input
+            pending.future.set_result(result)
 
     # ---- keeping cards honest -------------------------------------------
 

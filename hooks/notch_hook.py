@@ -116,6 +116,8 @@ def permission_request(event: dict):
     decision = {"behavior": answer["decision"]}
     if answer["decision"] == "allow" and answer.get("permissions"):
         decision["updatedPermissions"] = answer["permissions"]
+    if answer["decision"] == "allow" and answer.get("updatedInput"):
+        decision["updatedInput"] = answer["updatedInput"]
     if answer["decision"] == "deny":
         decision["message"] = answer.get("reason") or "denied from the notch"
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}))

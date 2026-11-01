@@ -85,6 +85,7 @@ async def serve():
             bool(msg.get("approved")),
             always=bool(msg.get("always")),
             how=str(msg.get("how") or "from the notch"),
+            answers=msg.get("answers") if isinstance(msg.get("answers"), dict) else None,
         )
 
     def row_state(session_id: str) -> str:

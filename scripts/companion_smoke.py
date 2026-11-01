@@ -173,6 +173,34 @@ async def main() -> int:
             check("ask goes back to the agent as a deny with your question",
                   answer.get("decision") == "deny" and answer.get("reason") == "say why first", answer)
             writer.close()
+
+            # Claude's own question, through the real hook.
+            questions = [{"question": "Which color?", "header": "Color", "multiSelect": False,
+                          "options": [{"label": "Red", "description": "warm"}, {"label": "Blue", "description": "cool"}]}]
+            hook = await asyncio.create_subprocess_exec(
+                sys.executable, str(ROOT / "hooks" / "notch_hook.py"),
+                env={**env}, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            )
+            hook.stdin.write(json.dumps({
+                "hook_event_name": "PermissionRequest", "session_id": SESSION, "cwd": cwd,
+                "tool_name": "AskUserQuestion", "tool_input": {"questions": questions},
+            }).encode())
+            hook.stdin.close()
+            asked = await first(ws, "approvals", lambda m: m["list"] and m["list"][0]["tool"] == "AskUserQuestion")
+            card = asked["list"][0]
+            check("a question's options reach the notch", card["questions"] == questions, card)
+
+            await ws.send(json.dumps({"type": "approve", "id": card["id"], "approved": True}))
+            await asyncio.sleep(0.3)
+            check("a yes with no choice in it doesn't answer it", hook.returncode is None)
+
+            await ws.send(json.dumps({"type": "approve", "id": card["id"], "approved": True,
+                                      "answers": {"Which color?": "Red"}}))
+            out = await asyncio.wait_for(hook.stdout.read(), timeout=5)
+            decision = json.loads(out)["hookSpecificOutput"]["decision"]
+            check("the choice goes back as the tool's input",
+                  decision["behavior"] == "allow"
+                  and decision["updatedInput"] == {"questions": questions, "answers": {"Which color?": "Red"}}, decision)
     finally:
         daemon.terminate()
         await daemon.wait()

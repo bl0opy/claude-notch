@@ -623,15 +623,26 @@ private struct ApprovalStack: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let top = state.topApproval {
-                ApprovalCard(
-                    request: top,
-                    waiting: state.approvals.count - 1,
-                    canJump: state.agent(for: top)?.canJump ?? false,
-                    answer: { approved, always in state.answer(top, approved: approved, always: always) },
-                    explain: { state.explain(top) },
-                    jump: { state.jump(to: top) },
-                    hide: { state.snoozeApprovals() }
-                )
+                if top.questions.isEmpty {
+                    ApprovalCard(
+                        request: top,
+                        waiting: state.approvals.count - 1,
+                        canJump: state.agent(for: top)?.canJump ?? false,
+                        answer: { approved, always in state.answer(top, approved: approved, always: always) },
+                        explain: { state.explain(top) },
+                        jump: { state.jump(to: top) },
+                        hide: { state.snoozeApprovals() }
+                    )
+                } else {
+                    QuestionCard(
+                        request: top,
+                        canJump: state.agent(for: top)?.canJump ?? false,
+                        choose: { state.choose(top, answers: $0) },
+                        jump: { state.jump(to: top) },
+                        hide: { state.snoozeApprovals() }
+                    )
+                    .id(top.id)
+                }
             }
             ForEach(state.approvals.dropFirst().prefix(3)) { request in
                 ApprovalLine(
@@ -781,6 +792,118 @@ private struct ApprovalCard: View {
     }
 }
 
+/// One of Claude's multiple-choice questions. With one question that takes one
+/// answer, picking is answering; otherwise picks collect until send.
+private struct QuestionCard: View {
+    let request: ApprovalRequest
+    let canJump: Bool
+    let choose: ([String: Any]) -> Void
+    let jump: () -> Void
+    let hide: () -> Void
+    @State private var picked: [String: Set<String>] = [:]
+
+    private var oneTap: Bool { request.questions.count == 1 && !request.questions[0].multiSelect }
+    private var complete: Bool { request.questions.allSatisfy { !(picked[$0.text] ?? []).isEmpty } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(request.project.isEmpty ? "Claude is asking" : "\(request.project) is asking")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AgentPhase.waiting.tint)
+                Spacer()
+                if canJump {
+                    small("open in app ↗", action: jump)
+                }
+                small("hide", action: hide)
+            }
+            ForEach(request.questions, id: \.text) { question in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(inlineMarkdown(question.text))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(white: 0.94))
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(question.options, id: \.label) { option in
+                        row(option, of: question)
+                    }
+                }
+            }
+            if !oneTap {
+                Button(action: send) {
+                    Text("send")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(allowTint.opacity(complete ? 0.25 : 0.08)))
+                        .foregroundStyle(allowTint.opacity(complete ? 1 : 0.4))
+                }
+                .buttonStyle(.plain)
+                .disabled(!complete)
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(white: 0.11))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(AgentPhase.waiting.tint.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    private func row(_ option: ApprovalRequest.Question.Option, of question: ApprovalRequest.Question) -> some View {
+        let on = picked[question.text]?.contains(option.label) ?? false
+        return Button(action: { tap(option.label, in: question) }) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(option.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(white: on ? 1 : 0.86))
+                if !option.description.isEmpty {
+                    Text(inlineMarkdown(option.description))
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color(white: 0.52))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(on ? allowTint.opacity(0.22) : Color(white: 0.16)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func small(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Color(white: 0.45))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tap(_ label: String, in question: ApprovalRequest.Question) {
+        if oneTap {
+            choose([question.text: label])
+        } else if question.multiSelect {
+            picked[question.text, default: []].formSymmetricDifference([label])
+        } else {
+            picked[question.text] = [label]
+        }
+    }
+
+    private func send() {
+        var answers: [String: Any] = [:]
+        for question in request.questions {
+            let labels = picked[question.text] ?? []
+            answers[question.text] = question.multiSelect
+                ? question.options.map(\.label).filter(labels.contains) as Any
+                : labels.first as Any
+        }
+        choose(answers)
+    }
+}
+
 /// A question behind the top one: enough to recognise it and clear it.
 private struct ApprovalLine: View {
     let request: ApprovalRequest
@@ -801,7 +924,9 @@ private struct ApprovalLine: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            mini("✓", tint: allowTint) { answer(true) }
+            if request.questions.isEmpty {
+                mini("✓", tint: allowTint) { answer(true) }
+            }
             mini("✕", tint: Color(white: 0.6)) { answer(false) }
             if canJump {
                 mini("↗", tint: Color(white: 0.6), action: jump)

@@ -506,7 +506,17 @@ final class AgentState: ObservableObject {
         micOpen = down
         client?.send(["type": "ptt", "down": down])
     }
+    /// A choice for one of Claude's questions: each question's text, then the
+    /// label picked, or the labels when it takes several.
+    func choose(_ request: ApprovalRequest, answers: [String: Any]) {
+        fleet?.send(["type": "approve", "id": request.id, "approved": true, "always": false,
+                     "how": "from the notch", "answers": answers])
+        approvals.removeAll { $0.id == request.id }
+    }
+
     func answer(_ request: ApprovalRequest, approved: Bool, always: Bool = false) {
+        // A question only takes a choice; a yes would leave it waiting.
+        if approved, !request.questions.isEmpty { return }
         fleet?.send(["type": "approve", "id": request.id, "approved": approved, "always": always, "how": "from the notch"])
         // The daemon's next snapshot confirms it; don't leave the card up meanwhile.
         approvals.removeAll { $0.id == request.id }
