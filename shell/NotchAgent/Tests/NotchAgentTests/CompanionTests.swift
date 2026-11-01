@@ -161,6 +161,20 @@ final class CompanionTests: XCTestCase {
         XCTAssertFalse(state.dormant)
     }
 
+    func testTheNotchGoesOnTheMacBooksDisplayWhereverItIsInTheList() {
+        struct Display { let name: String; var notched = false; var builtIn = false }
+        func pick(_ displays: [Display]) -> String? {
+            NotchGeometry.pick(displays, notched: \.notched, builtIn: \.builtIn)?.name
+        }
+        let macbook = Display(name: "macbook", notched: true, builtIn: true)
+        let external = Display(name: "external")
+        XCTAssertEqual(pick([external, macbook]), "macbook", "even with the external as the main display")
+        XCTAssertEqual(pick([macbook, external]), "macbook")
+        XCTAssertEqual(pick([external, Display(name: "macbook", builtIn: true)]), "macbook", "at a resolution hiding the notch")
+        XCTAssertEqual(pick([external, Display(name: "other")]), "external", "lid closed: the display with the menu bar")
+        XCTAssertNil(pick([]))
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

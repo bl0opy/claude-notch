@@ -13,24 +13,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let pushToTalk = PushToTalk()
     private var watchers: Set<AnyCancellable> = []
     private var appObservers: [NSObjectProtocol] = []
+    private var placed: (frame: NSRect, notch: CGSize)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         if state.hostedAgents { TerminalWindow.installMenu() }
 
-        let geometry = NotchGeometry.current()
-        let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
         // Made before the window: the view reports the island's frame during
         // the window's first layout, and that report must land somewhere.
         let tracker = MouseTracker(state: state)
-        let window = NotchWindow(
-            contentRect: frame,
-            rootView: NotchView(state: state, geometry: geometry) { tracker.island = $0 }
-        )
-        window.setFrame(frame, display: true)
-        self.window = window
-        tracker.install(on: window)
         mouse = tracker
+        let window = NotchWindow(contentRect: .zero, rootView: EmptyView())
+        self.window = window
+        placeOnNotch()
+        tracker.install(on: window)
+        // Displays plugged in, unplugged or rearranged all move the coordinates
+        // the window was placed by.
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in self?.placeOnNotch() }
+            .store(in: &watchers)
 
         client = BridgeClient()
         client.onMessage = { [weak self] message in self?.state.apply(message) }
@@ -114,6 +115,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Quit Anyway")
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+
+    private func placeOnNotch() {
+        guard let window, let mouse, let geometry = NotchGeometry.current() else { return }
+        let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
+        let notch = CGSize(width: geometry.notchWidth, height: geometry.notchHeight)
+        if let placed, placed.frame == frame, placed.notch == notch { return }
+        placed = (frame, notch)
+        window.contentView = NSHostingView(
+            rootView: NotchView(state: state, geometry: geometry) { mouse.island = $0 }
+        )
+        window.setFrame(frame, display: true)
     }
 
     /// Up while the Claude app is open, and put away when it quits.
