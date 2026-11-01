@@ -266,6 +266,43 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(BridgeToken.read, "secret")
     }
 
+    func testInTheClaudeAppItStaysFolded() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [desktopRow("s1", state: "working")]])
+        XCTAssertEqual(state.islandMode, .compact)
+        state.claudeInFront = true
+        XCTAssertEqual(state.islandMode, .dormant)
+        state.apply(["type": "fleet_event", "event": "done", "sessionId": "s1", "project": "s1", "long": true, "seconds": 60])
+        XCTAssertEqual(state.islandMode, .dormant, "no notices either")
+    }
+
+    func testInTheClaudeAppAQuestionIsACountThatDropsDownWhenYouLeave() {
+        let (state, _, _) = makeState(["voice": false])
+        state.claudeInFront = true
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        XCTAssertEqual(state.islandMode, .compact)
+        state.claudeInFront = false
+        XCTAssertEqual(state.islandMode, .question)
+    }
+
+    func testInTheClaudeAppHoverStillOpensIt() {
+        let (state, _, _) = makeState(["voice": false])
+        state.claudeInFront = true
+        state.hovering = true
+        XCTAssertEqual(state.islandMode, .expanded)
+    }
+
+    func testInTheClaudeAppItMakesNoSound() {
+        let (state, _, _) = makeState(["voice": false])
+        var played: [AgentState.Chime] = []
+        state.play = { played.append($0) }
+        state.apply(["type": "approvals", "list": []])
+        state.claudeInFront = true
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        state.apply(["type": "fleet_event", "event": "done", "sessionId": "s1", "project": "s1", "long": true, "seconds": 60])
+        XCTAssertTrue(played.isEmpty)
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

@@ -133,6 +133,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func followClaudeApp() {
         applyVisibility()
         appObservers = ClaudeApp.observe { [weak self] in self?.applyVisibility() }
+        state.claudeInFront = ClaudeApp.frontmost
+        appObservers.append(ClaudeApp.observeFrontmost { [weak self] front in self?.state.claudeInFront = front })
         NotificationCenter.default.publisher(for: Settings.changed)
             .sink { [weak self] _ in self?.applyVisibility() }
             .store(in: &watchers)

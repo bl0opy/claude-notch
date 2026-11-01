@@ -26,6 +26,21 @@ final class ClaudeApp {
         shouldShow(follow: Settings.followClaudeApp, installed: installed, running: running)
     }
 
+    static var frontmost: Bool {
+        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId
+    }
+
+    /// Calls back with whether the app is in front, whenever that may have changed.
+    static func observeFrontmost(_ changed: @escaping @MainActor (Bool) -> Void) -> NSObjectProtocol {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            let front = app?.bundleIdentifier == bundleId
+            MainActor.assumeIsolated { changed(front) }
+        }
+    }
+
     /// Calls back whenever the app launches or quits.
     static func observe(_ changed: @escaping @MainActor () -> Void) -> [NSObjectProtocol] {
         let center = NSWorkspace.shared.notificationCenter

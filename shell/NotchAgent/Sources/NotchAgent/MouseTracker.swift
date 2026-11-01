@@ -80,7 +80,7 @@ final class MouseTracker {
         // The screen's top edge counts as inside: the cursor pinned against it
         // above the notch is aiming for the notch. Folded, the island is only
         // the hardware notch, so give it some slack either side.
-        let slack: CGFloat = state.dormant ? -24 : 0
+        let slack: CGFloat = state.islandMode == .dormant ? -24 : 0
         let target = islandOnScreen(in: window).insetBy(dx: slack, dy: -2)
         let inside = !island.isEmpty && target.contains(cursor)
         window.ignoresMouseEvents = !inside

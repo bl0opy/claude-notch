@@ -85,6 +85,9 @@ final class AgentState: ObservableObject {
     /// Put away because the Claude app isn't open. Sessions keep being watched,
     /// so it's current the moment it comes back.
     private(set) var hidden = false
+    /// You're in the Claude app, where all of this is already on screen. The
+    /// notch stays out of the way until you hover it or switch away.
+    @Published var claudeInFront = false
     @Published var hovering: Bool = false {
         didSet {
             // Moving over the lingering panel and away is how you dismiss it.
@@ -196,6 +199,9 @@ final class AgentState: ObservableObject {
     /// question, or the panel. A question you haven't hidden outranks a notice.
     var islandMode: IslandMode {
         if expanded { return .expanded }
+        // The open tab may be a different session, so a waiting question still
+        // shows as a count on the pill. It drops down once you switch away.
+        if claudeInFront { return approvals.isEmpty ? .dormant : .compact }
         if !unseenApprovals.isEmpty { return .question }
         if notice != nil { return .notice }
         return dormant ? .dormant : .compact
@@ -420,7 +426,7 @@ final class AgentState: ObservableObject {
     var play: (Chime) -> Void = { NSSound(named: NSSound.Name($0.rawValue))?.play() }
     private var approvalsLoaded = false
     private func chime(_ sound: Chime) {
-        guard !hidden, Settings.sounds(voice: voice) else { return }
+        guard !hidden, !claudeInFront, Settings.sounds(voice: voice) else { return }
         play(sound)
     }
 
