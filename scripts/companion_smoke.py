@@ -2,7 +2,8 @@
 
 Starts an agents daemon on spare ports over a fake ~/.claude with one session
 in it, then checks the roster row, the session's chat, and that a permission
-question carries what the agent said before asking.
+question carries what the agent said before asking and can be explained while
+it stays open. A stand-in `claude` plays the explainer, so nothing is billed.
 
     .venv/bin/python scripts/companion_smoke.py
 """
@@ -28,6 +29,20 @@ def check(label: str, ok: bool, detail=""):
     global failures
     failures += not ok
     print(f"{'ok  ' if ok else 'FAIL'} {label}{f' — {detail}' if detail and not ok else ''}")
+
+
+def fake_claude() -> str:
+    bin_dir = Path(tempfile.mkdtemp(prefix="companion-bin-"))
+    script = bin_dir / "claude"
+    script.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = agents ]; then echo "[]"; exit 0; fi\n'
+        'cat > "$(dirname "$0")/stdin"\n'
+        "sleep 0.3\n"
+        "echo 'Deletes build/old for good.'\n"
+    )
+    script.chmod(0o755)
+    return str(bin_dir)
 
 
 def fake_home(cwd: str) -> tuple[Path, Path]:
@@ -74,8 +89,9 @@ async def first(ws, kind: str, when=lambda m: True) -> dict:
 async def main() -> int:
     cwd = tempfile.mkdtemp(prefix="companion-cwd-")
     home, app = fake_home(cwd)
+    bin_dir = fake_claude()
     env = {**os.environ, **PORTS, "CLAUDE_HOME": str(home), "CLAUDE_DESKTOP_SESSIONS": str(app),
-           "SUPERVISOR_EXPLAIN": "off", "PATH": "/usr/bin:/bin"}
+           "SUPERVISOR_EXPLAIN": "off", "PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home)}
     daemon = await asyncio.create_subprocess_exec(
         sys.executable, "-m", "agentsd", cwd=ROOT, env=env,
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
@@ -108,6 +124,21 @@ async def main() -> int:
             card = approvals["list"][0]
             check("a question says why", card.get("why", "").startswith("The build folder has stale artifacts"), card)
             check("and what always would allow", card.get("always") == "Bash(rm -r build/*)", card)
+
+            await ws.send(json.dumps({"type": "explain", "id": card["id"]}))
+            busy = await first(ws, "approvals", lambda m: m["list"] and m["list"][0].get("explaining"))
+            check("asking why says it's working on it", bool(busy.get("list")), busy)
+            done = await first(ws, "approvals", lambda m: m["list"] and m["list"][0].get("explanation"))
+            check("the explanation lands on the card, still open",
+                  done["list"][0]["explanation"] == "Deletes build/old for good." and done["list"][0]["id"] == card["id"], done)
+            handed = json.loads((Path(bin_dir) / "stdin").read_text())
+            check("it's shown the call and the conversation",
+                  handed["call"] == "rm -r build/old" and handed["conversation_so_far"][0]["role"] == "you", handed)
+            try:
+                await asyncio.wait_for(reader.readline(), timeout=0.3)
+                check("the hook is still waiting", False)
+            except asyncio.TimeoutError:
+                check("the hook is still waiting", True)
 
             await ws.send(json.dumps({"type": "approve", "id": card["id"], "approved": False,
                                       "how": "say why first"}))

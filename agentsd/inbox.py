@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from agentsd import chat, risk
+from agentsd import chat, explain, risk
 from agentsd.registry import from_registry
 from agentsd.snapshot import project_name
 from agentsd.turns import DONE_AFTER_S
@@ -42,6 +42,9 @@ class Pending:
     created: float = field(default_factory=time.time)
     # What the agent said before asking, from its transcript.
     why: str = ""
+    # Asked for from the card. The question stays open meanwhile.
+    explanation: str = ""
+    explaining: bool = False
     future: asyncio.Future | None = None
     # Seen the session's dialog up. Only then does it closing mean anything.
     armed: bool = False
@@ -61,6 +64,8 @@ class Pending:
             "canAlways": bool(self.suggestions),
             "always": always_label(self.suggestions),
             "why": self.why,
+            "explanation": self.explanation,
+            "explaining": self.explaining,
             "created": int(self.created * 1000),
         }
 
@@ -94,7 +99,8 @@ def _alive(pid: int) -> bool:
 
 
 class Inbox:
-    def __init__(self, host: str, port: int, broadcast, owned_timeout_s: float, terminal_timeout_s: float):
+    def __init__(self, host: str, port: int, broadcast, owned_timeout_s: float, terminal_timeout_s: float,
+                 helper_pids: set[int] | None = None):
         self.host = host
         self.port = port
         self._broadcast = broadcast
@@ -102,6 +108,8 @@ class Inbox:
         self._terminal_timeout = terminal_timeout_s
         self._pending: dict[str, Pending] = {}
         self._server: asyncio.Server | None = None
+        # Helper Claude processes, which don't belong on the roster.
+        self._helper_pids = helper_pids if helper_pids is not None else set()
         self._busy_since: dict[int, float] = {}
         # How long each agent's last stretch of work ran, for the Stop event
         # that may land just before or just after the tick that saw it end.
@@ -137,6 +145,21 @@ class Inbox:
         self._settle(pending, decision, how, always=always and approved)
         logger.info(f"{decision}{' always' if always else ''} {pending.tool} for {project_name(pending.cwd)} {how}")
         return True
+
+    async def explain(self, req_id: str):
+        """Say what a question means, without answering it."""
+        pending = self._pending.get(req_id)
+        if not pending or pending.explaining or pending.explanation:
+            return
+        pending.explaining = True
+        await self._changed()
+        rows = await asyncio.to_thread(chat.chat, pending.cwd, pending.session_id)
+        pending.explanation = await explain.explain(
+            pending.tool, risk.detail(pending.tool, pending.input), rows, self._helper_pids
+        )
+        pending.explaining = False
+        if req_id in self._pending:
+            await self._changed()
 
     def _settle(self, pending: Pending, decision: str, reason: str, always: bool = False):
         if pending.future and not pending.future.done():

@@ -24,6 +24,9 @@ struct ApprovalRequest: Identifiable, Equatable {
     let always: String
     /// What the agent said before asking, or what it was asked.
     let why: String
+    /// Asked for with "why?": what the call does, while the question stays open.
+    let explanation: String
+    let explaining: Bool
     let created: Date
 
     init?(_ raw: [String: Any]) {
@@ -40,6 +43,8 @@ struct ApprovalRequest: Identifiable, Equatable {
         canAlways = raw["canAlways"] as? Bool ?? false
         always = raw["always"] as? String ?? ""
         why = raw["why"] as? String ?? ""
+        explanation = raw["explanation"] as? String ?? ""
+        explaining = raw["explaining"] as? Bool ?? false
         created = Date(timeIntervalSince1970: (raw["created"] as? Double ?? 0) / 1000)
     }
 

@@ -74,6 +74,7 @@ async def serve():
         announce,
         owned_timeout_s=config.owned_timeout_s,
         terminal_timeout_s=config.terminal_timeout_s,
+        helper_pids=supervisor.own_pids,
     )
 
     async def on_approve(msg):
@@ -87,6 +88,14 @@ async def serve():
     def row_state(session_id: str) -> str:
         row = row_of(session_id)
         return row["state"] if row else "unknown"
+
+    explaining: set[asyncio.Task] = set()
+
+    async def on_explain(msg):
+        # Takes seconds, and the socket has other things to say meanwhile.
+        task = asyncio.create_task(inbox.explain(str(msg.get("id") or "")))
+        explaining.add(task)
+        task.add_done_callback(explaining.discard)
 
     async def on_chat(msg):
         """The conversation so far in one session, for the notch's panel."""
@@ -181,6 +190,7 @@ async def serve():
     bridge.on("interrupt", on_interrupt)
     bridge.on("type", on_type)
     bridge.on("chat", on_chat)
+    bridge.on("explain", on_explain)
     pty.on_change = lambda: asyncio.create_task(bridge.send(pty.snapshot()))
     await bridge.start()
     await inbox.start()

@@ -89,6 +89,7 @@ final class SnapshotTests: XCTestCase {
                                why: "The fix is committed on main. Pushing it so the TestFlight build picks it up.",
                                always: "Bash(git push origin main)")
         push["detail"] = "git push origin main"
+        push["explanation"] = "Sends your local **main** commits to GitHub, where others can see them. It wants this so TestFlight builds the fix. Denied, the fix stays on your Mac."
         state.apply(["type": "approvals", "list": [push, approvalRow("q2", session: "bus-tracker", project: "bus-tracker")]])
         try render("6-question", state)
     }

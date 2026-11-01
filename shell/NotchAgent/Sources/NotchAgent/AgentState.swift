@@ -506,14 +506,10 @@ final class AgentState: ObservableObject {
         approvals.removeAll { $0.id == request.id }
     }
 
-    /// Neither yes nor no yet: the agent is told to explain itself and ask
-    /// again. Claude Code reads a deny's message and carries on with the turn.
-    static let askWhy = "The user hasn't decided yet and wants to know why first. "
-        + "In a sentence or two, say what this is for and what happens if it's skipped, then try it again."
-
-    func ask(_ request: ApprovalRequest) {
-        fleet?.send(["type": "approve", "id": request.id, "approved": false, "always": false, "how": Self.askWhy])
-        approvals.removeAll { $0.id == request.id }
+    /// Neither yes nor no yet: the daemon works out what the call means and
+    /// puts it on the card, with the question still open.
+    func explain(_ request: ApprovalRequest) {
+        fleet?.send(["type": "explain", "id": request.id])
     }
 
     func snoozeApprovals() {

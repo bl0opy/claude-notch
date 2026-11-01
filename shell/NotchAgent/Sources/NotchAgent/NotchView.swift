@@ -628,7 +628,7 @@ private struct ApprovalStack: View {
                     waiting: state.approvals.count - 1,
                     canJump: state.agent(for: top)?.canJump ?? false,
                     answer: { approved, always in state.answer(top, approved: approved, always: always) },
-                    ask: { state.ask(top) },
+                    explain: { state.explain(top) },
                     jump: { state.jump(to: top) },
                     hide: { state.snoozeApprovals() }
                 )
@@ -669,7 +669,7 @@ private struct ApprovalCard: View {
     let waiting: Int
     let canJump: Bool
     let answer: (_ approved: Bool, _ always: Bool) -> Void
-    let ask: () -> Void
+    let explain: () -> Void
     let jump: () -> Void
     let hide: () -> Void
 
@@ -719,6 +719,18 @@ private struct ApprovalCard: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
+            if !request.explanation.isEmpty {
+                Text(inlineMarkdown(request.explanation))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(white: 0.88))
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 9).padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.16)))
+            }
+
             HStack(spacing: 6) {
                 pill("allow", tint: allowTint) { answer(true, false) }
                 if request.canAlways {
@@ -726,8 +738,11 @@ private struct ApprovalCard: View {
                         .help(request.always.isEmpty ? "allow this from now on" : "adds \(request.always)")
                 }
                 pill("deny", tint: Color(white: 0.6)) { answer(false, false) }
-                pill("why?", tint: Color(white: 0.6), action: ask)
-                    .help("it explains itself and asks again")
+                if request.explanation.isEmpty {
+                    pill(request.explaining ? "reading…" : "why?", tint: Color(white: 0.6), action: explain)
+                        .disabled(request.explaining)
+                        .help("what this does and why, without answering it")
+                }
                 if canJump {
                     pill("↗", tint: Color(white: 0.6), action: jump)
                 }

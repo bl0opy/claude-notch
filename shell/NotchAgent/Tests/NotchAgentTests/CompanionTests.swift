@@ -43,14 +43,25 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(state.approvals.first?.always, "Bash(git push:*)")
     }
 
-    func testAskingWhyDeniesWithAQuestionForTheAgent() {
+    func testAskingWhyLeavesTheQuestionOpen() {
         let (state, _, fleet) = makeState(["voice": false])
         state.apply(["type": "approvals", "list": [approvalRow("a1")]])
-        state.ask(state.approvals[0])
-        XCTAssertEqual(fleet.types, ["approve"])
-        XCTAssertEqual(fleet.sent[0]["approved"] as? Bool, false)
-        XCTAssertEqual(fleet.sent[0]["how"] as? String, AgentState.askWhy)
-        XCTAssertTrue(state.approvals.isEmpty)
+        state.explain(state.approvals[0])
+        XCTAssertEqual(fleet.types, ["explain"])
+        XCTAssertEqual(fleet.sent[0]["id"] as? String, "a1")
+        XCTAssertEqual(state.approvals.map(\.id), ["a1"], "no answer was given")
+    }
+
+    func testTheExplanationComesThroughOnTheCard() {
+        let (state, _, _) = makeState(["voice": false])
+        var row = approvalRow("a1")
+        row["explaining"] = true
+        state.apply(["type": "approvals", "list": [row]])
+        XCTAssertTrue(state.approvals[0].explaining)
+        row["explaining"] = false
+        row["explanation"] = "Pushes main to origin."
+        state.apply(["type": "approvals", "list": [row]])
+        XCTAssertEqual(state.approvals[0].explanation, "Pushes main to origin.")
     }
 
     func testOpeningThePanelAsksForTheTargetsChat() {
