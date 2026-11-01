@@ -14,7 +14,7 @@ from agentsd import paths, risk
 
 TAIL_BYTES = 1_500_000
 ROWS = 60
-TEXT_CHARS = 1_200
+TEXT_CHARS = 6_000
 # How a message from another session (the notch's own replies included) opens.
 PEER_OPENER = "Another Claude session sent a message:\n"
 

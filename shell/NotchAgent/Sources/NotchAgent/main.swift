@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func placeOnNotch() {
         guard let window, let mouse, let geometry = NotchGeometry.current() else { return }
-        let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
+        let frame = geometry.windowFrame(expandedWidth: 720, expandedHeight: 600)
         let notch = CGSize(width: geometry.notchWidth, height: geometry.notchHeight)
         if let placed, placed.frame == frame, placed.notch == notch { return }
         placed = (frame, notch)

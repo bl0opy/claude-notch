@@ -29,7 +29,8 @@ struct NotchView: View {
         case .dormant: return geometry.notchWidth
         case .compact: return geometry.notchWidth + (state.approvals.isEmpty ? 112 : 128)
         case .notice: return 400
-        case .question, .expanded: return 480
+        case .question: return 480
+        case .expanded: return 680
         }
     }
 
@@ -130,45 +131,50 @@ struct NotchView: View {
         .frame(height: stripHeight)
     }
 
-    /// Every session along the top, the chosen one's conversation under it,
-    /// and a line to answer it in.
+    /// Sessions down the side, most urgent first; the chosen one's
+    /// conversation beside them, and a line to answer it in.
     private var expanded: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SessionChips(state: state)
             if !state.approvals.isEmpty {
                 ApprovalStack(state: state)
             }
-            if let target = state.target {
-                TargetLine(agent: target, open: { state.jump(to: target) })
+            HStack(alignment: .top, spacing: 14) {
+                SessionSidebar(state: state)
+                    .frame(width: 170)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let target = state.target {
+                        TargetLine(agent: target, open: { state.jump(to: target) })
+                    }
+                    if state.voice, !state.userTranscript.isEmpty || !state.assistantText.isEmpty {
+                        voiceTurn
+                    }
+                    if state.target != nil {
+                        ChatView(rows: state.chat, loading: state.chatFor != state.target?.id,
+                                 maxHeight: state.approvals.isEmpty ? 400 : 230)
+                    } else {
+                        Text(emptyHint)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.34))
+                    }
+                    if state.addingAgent {
+                        NewAgentField(state: state)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                    ComposeField(state: state)
+                    if !state.lastError.isEmpty {
+                        Text(state.lastError)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(AgentPhase.error.tint)
+                            .lineLimit(2)
+                    }
+                    footer
+                }
             }
-            if state.voice, !state.userTranscript.isEmpty || !state.assistantText.isEmpty {
-                voiceTurn
-            }
-            if state.target != nil {
-                ChatView(rows: state.chat, loading: state.chatFor != state.target?.id,
-                         maxHeight: state.approvals.isEmpty ? 250 : 110)
-            } else {
-                Text(emptyHint)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.34))
-            }
-            if state.addingAgent {
-                NewAgentField(state: state)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
-            }
-            ComposeField(state: state)
-            if !state.lastError.isEmpty {
-                Text(state.lastError)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AgentPhase.error.tint)
-                    .lineLimit(2)
-            }
-            footer
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 18)
         .padding(.top, 8)
-        .padding(.bottom, 18)
-        .frame(width: 480, alignment: .leading)
+        .padding(.bottom, 16)
+        .frame(width: 680, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -224,52 +230,70 @@ struct NotchView: View {
     }
 }
 
-/// Every session as a chip, worst first. The chosen one is who the chat and
-/// the reply line are about; + starts a hosted agent when those are on.
-private struct SessionChips: View {
+/// Every session down the side, grouped by how much it wants you. The chosen
+/// one is who the chat and the reply line are about.
+private struct SessionSidebar: View {
     @ObservedObject var state: AgentState
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(state.agents) { agent in
-                    chip(agent)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(state.sections, id: \.title) { section in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(section.title)
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .textCase(.uppercase)
+                            .foregroundStyle(section.title == "needs you" ? AgentPhase.waiting.tint : Color(white: 0.36))
+                            .padding(.leading, 7)
+                            .padding(.bottom, 2)
+                        ForEach(section.agents) { agent in
+                            row(agent)
+                        }
+                    }
                 }
                 if state.hostedAgents {
                     Button(action: toggleNewAgent) {
-                        Text(state.addingAgent ? "×" : "+")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .frame(width: 22, height: 20)
-                            .background(Capsule().fill(Color(white: 0.14)))
-                            .foregroundStyle(Color(white: 0.7))
+                        Text(state.addingAgent ? "cancel" : "+ agent")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.6))
+                            .padding(.leading, 7)
                     }
                     .buttonStyle(.plain)
-                    .help(state.addingAgent ? "cancel" : "start an agent")
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
+        .frame(maxHeight: 440)
     }
 
-    private func chip(_ agent: RemoteAgent) -> some View {
+    private func row(_ agent: RemoteAgent) -> some View {
         let on = agent.id == state.target?.id
         return Button(action: { state.focus(agent.id) }) {
-            HStack(spacing: 5) {
+            HStack(alignment: .top, spacing: 7) {
                 Circle()
-                    .fill(agent.state.tint)
-                    .frame(width: 5, height: 5)
-                Text(agent.label)
-                    .lineLimit(1)
-                    .frame(maxWidth: 150)
-                    .fixedSize()
+                    .fill(state.unread.contains(agent.id) ? Color(red: 0.36, green: 0.85, blue: 0.55) : agent.state.tint)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.label)
+                        .font(.system(size: 11, weight: on ? .semibold : .regular))
+                        .foregroundStyle(Color(white: on ? 0.95 : 0.72))
+                        .lineLimit(2)
+                    Text(agent.project)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.38))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            .font(.system(size: 10, weight: on ? .semibold : .regular, design: .monospaced))
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Capsule().fill(Color(white: on ? 0.17 : 0.09)))
-            .foregroundStyle(Color(white: on ? 0.92 : 0.55))
+            .padding(.horizontal, 7).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: on ? 0.15 : 0)))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(agent.title)
+        .help(agent.subtitle)
     }
 
     private func toggleNewAgent() {
@@ -336,20 +360,16 @@ private struct ChatLine: View {
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(Color(white: 0.5))
                 Text(row.text)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Color(white: 0.92))
-                    .lineLimit(6)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color(white: 0.94))
+                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
-            .padding(.top, 4)
+            .padding(.top, 6)
             .help(row.role == .notch ? "sent from the notch" : "")
         case .claude:
-            Text(row.text)
-                .font(.system(size: 12))
-                .foregroundStyle(Color(white: 0.74))
-                .lineLimit(12)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            MarkdownText(row.text)
         }
     }
 }
@@ -691,7 +711,7 @@ private struct ApprovalCard: View {
                 .textSelection(.enabled)
 
             if !request.why.isEmpty {
-                Text(request.why)
+                Text(inlineMarkdown(request.why))
                     .font(.system(size: 11))
                     .foregroundStyle(Color(white: 0.62))
                     .lineLimit(3)

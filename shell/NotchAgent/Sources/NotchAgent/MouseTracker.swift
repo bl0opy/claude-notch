@@ -3,7 +3,7 @@ import AppKit
 /// Decides, from the cursor alone, whether the notch is being hovered and
 /// whether its window should take clicks at all.
 ///
-/// The window is a fixed 520×480 panel at the top of the screen, big enough for
+/// The window is a fixed 720×600 panel at the top of the screen, big enough for
 /// the open panel, and most of it is empty. Left to itself it sits over whatever
 /// is under it, so a click or drag up there could land in the notch instead:
 /// dragging a window across the top of the screen opened the panel under the

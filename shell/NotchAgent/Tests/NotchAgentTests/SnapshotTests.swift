@@ -93,6 +93,33 @@ final class SnapshotTests: XCTestCase {
         try render("6-question", state)
     }
 
+    func testMarkdownFormatting() throws {
+        let view = MarkdownText("""
+        ## What changed
+        The **notch** now reads `settings.json` and [the docs](https://example.com).
+
+        - first thing
+          - nested thing
+        1. a numbered step
+
+        > a quoted line
+
+        ```python
+        print("hello")
+        ```
+
+        | Cause | Prompts |
+        |---|---|
+        | Heredocs | 253 |
+        """)
+        .padding(16).frame(width: 480).background(.black)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.nsImage)
+        let rep = try XCTUnwrap(image.tiffRepresentation.flatMap(NSBitmapImageRep.init(data:)))
+        try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("9-markdown.png"))
+    }
+
     func testDesktopSessionPanel() throws {
         let (state, _, _) = makeState(["voice": false])
         state.apply(["type": "agents", "list": [

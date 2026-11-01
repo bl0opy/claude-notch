@@ -116,6 +116,10 @@ final class AgentState: ObservableObject {
     @Published var notice: Notice?
     private var noticeTimer: Task<Void, Never>?
 
+    /// Turns that finished since you last looked at them.
+    @Published var unread: Set<String> = []
+    private var wasExpanded = false
+
     /// True while a field in the notch has the keyboard — the compose line or
     /// the new-agent path: the panel stays open with the cursor elsewhere,
     /// since you're mid-sentence.
@@ -144,8 +148,29 @@ final class AgentState: ObservableObject {
     var target: RemoteAgent? {
         if let focused, let agent = agents.first(where: { $0.id == focused }) { return agent }
         if voice { return nil }
-        return agents.first(where: \.hosted) ?? agents.first
+        return agents.first(where: \.hosted) ?? prioritized.first
     }
+
+    /// How much a session wants you: a question, something it says it needs,
+    /// a turn you haven't seen the end of, then the rest.
+    func urgency(_ agent: RemoteAgent) -> Int {
+        if agent.state == .waiting || approvals.contains(where: { $0.sessionId == agent.id }) { return 0 }
+        if !agent.needs.isEmpty { return 1 }
+        if unread.contains(agent.id) { return 2 }
+        return agent.state == .working ? 3 : 4
+    }
+
+    /// The sidebar, most urgent first.
+    var sections: [(title: String, agents: [RemoteAgent])] {
+        let titled = [(0...1, "needs you"), (2...2, "finished"), (3...3, "working"), (4...4, "idle")]
+        return titled.compactMap { range, title in
+            let rows = agents.filter { range.contains(urgency($0)) }
+                .sorted { (urgency($0), $0.label) < (urgency($1), $1.label) }
+            return rows.isEmpty ? nil : (title, rows)
+        }
+    }
+
+    var prioritized: [RemoteAgent] { sections.flatMap(\.agents) }
 
     var targetName: String {
         if let target { return target.title.isEmpty ? "that agent" : target.title }
@@ -235,6 +260,12 @@ final class AgentState: ObservableObject {
         let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Settings.foldAfter
         if fold != dormant { dormant = fold }
 
+        // Open, the session stays put so a line isn't typed to whatever just
+        // became urgent. Closed, the next look starts at what needs you most.
+        if expanded != wasExpanded {
+            wasExpanded = expanded
+            if !voice { focused = expanded ? target?.id : nil }
+        }
         if expanded, now.timeIntervalSince(chatAsked) >= Self.chatEvery { refreshChat() }
 
         if lingering {
@@ -313,6 +344,7 @@ final class AgentState: ObservableObject {
                 ($0.state.rank, $0.project) < ($1.state.rank, $1.project)
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
+            unread.formIntersection(rows.map(\.id))
         case "fleet_event":
             post(message)
         case "typed":
@@ -325,6 +357,7 @@ final class AgentState: ObservableObject {
             guard let id = message["id"] as? String, id == target?.id else { return }
             let rows = message["rows"] as? [[String: Any]] ?? []
             let next = rows.enumerated().compactMap { ChatRow($1, index: $0) }
+            if expanded { unread.remove(id) }
             if next != chat || chatFor != id { chat = next }
             chatFor = id
         case "focus":
@@ -349,6 +382,7 @@ final class AgentState: ObservableObject {
     private func post(_ message: [String: Any]) {
         guard let raw = message["event"] as? String, let kind = Notice.Kind(rawValue: raw),
               let sessionId = message["sessionId"] as? String else { return }
+        if kind == .done, !(expanded && sessionId == target?.id) { unread.insert(sessionId) }
         if voice, sessionId == focused { return }
         let project = message["project"] as? String ?? ""
         let line: String
@@ -410,6 +444,7 @@ final class AgentState: ObservableObject {
     }
     func focus(_ id: String) {
         focused = id
+        unread.remove(id)
         client?.send(["type": "focus", "id": id])
         refreshChat()
     }

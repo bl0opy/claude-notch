@@ -175,6 +175,77 @@ final class CompanionTests: XCTestCase {
         XCTAssertNil(pick([]))
     }
 
+    func testMarkdownBlocks() {
+        let blocks = MarkdownBlock.parse("""
+        # Title
+        one
+        two
+
+        - item
+          - inner
+        3. step
+        > said
+        ---
+        ```swift
+        let a = 1
+        ```
+        | A | B |
+        |---|:-:|
+        | 1 | 2 |
+        tail
+        """)
+        XCTAssertEqual(blocks, [
+            .heading("Title"), .paragraph("one\ntwo"), .bullet("item", depth: 0), .bullet("inner", depth: 1),
+            .numbered("3.", text: "step"), .quote("said"), .rule, .code("let a = 1"),
+            .table([["A", "B"], ["1", "2"]]), .paragraph("tail"),
+        ])
+    }
+
+    func testAFenceClippedPartwayStillShows() {
+        XCTAssertEqual(MarkdownBlock.parse("```\nlet a"), [.code("let a")])
+    }
+
+    func testTheSidebarPutsWhatNeedsYouFirst() {
+        let (state, _, _) = makeState(["voice": false])
+        var needy = desktopRow("needy", title: "Needy")
+        needy["needs"] = "pick a colour"
+        state.apply(["type": "agents", "list": [
+            desktopRow("idle", title: "Idle"), desktopRow("busy", state: "working", title: "Busy"),
+            needy, desktopRow("asking", state: "waiting", title: "Asking"), desktopRow("done", title: "Done"),
+        ]])
+        state.apply(["type": "fleet_event", "event": "done", "sessionId": "done", "project": "done", "long": false])
+        XCTAssertEqual(state.sections.map(\.title), ["needs you", "finished", "working", "idle"])
+        XCTAssertEqual(state.prioritized.map(\.id), ["asking", "needy", "done", "busy", "idle"])
+        XCTAssertEqual(state.target?.id, "asking")
+    }
+
+    func testAQuestionPutsItsSessionUnderNeedsYou() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [desktopRow("a", title: "A"), desktopRow("b", title: "B")]])
+        state.apply(["type": "approvals", "list": [approvalRow("q", session: "b")]])
+        XCTAssertEqual(state.prioritized.first?.id, "b")
+    }
+
+    func testLookingAtAFinishedSessionClearsIt() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [desktopRow("a"), desktopRow("b")]])
+        state.apply(["type": "fleet_event", "event": "done", "sessionId": "a", "project": "a", "long": false])
+        XCTAssertTrue(state.unread.contains("a"))
+        state.focus("a")
+        XCTAssertFalse(state.unread.contains("a"))
+    }
+
+    func testAnOpenPanelStaysOnItsSessionThenResetsToWhatNeedsYou() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [desktopRow("a", title: "A"), desktopRow("b", title: "B")]])
+        state.hovering = true
+        XCTAssertEqual(state.target?.id, "a")
+        state.apply(["type": "agents", "list": [desktopRow("a", title: "A"), desktopRow("b", state: "waiting", title: "B")]])
+        XCTAssertEqual(state.target?.id, "a", "a reply mustn't go to whatever just became urgent")
+        state.hovering = false
+        XCTAssertEqual(state.target?.id, "b")
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)
