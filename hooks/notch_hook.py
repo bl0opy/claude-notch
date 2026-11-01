@@ -24,6 +24,18 @@ HOST = os.getenv("NOTCH_INBOX_HOST", "127.0.0.1")
 PORT = int(os.getenv("NOTCH_INBOX_PORT", "8766"))
 OWNED_WAIT_S = float(os.getenv("APPROVAL_TIMEOUT_S", "180"))
 TERMINAL_WAIT_S = float(os.getenv("NOTCH_TERMINAL_WAIT_S", "590"))
+# Where backend/auth.py keeps it. The inbox drops a line that doesn't show it.
+TOKEN_FILE = os.getenv("NOTCH_TOKEN_FILE") or os.path.expanduser(
+    "~/Library/Application Support/notch-agent/bridge-token"
+)
+
+
+def token() -> str:
+    try:
+        with open(TOKEN_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 # Keep in step with agentsd/risk.py.
 RISKY_BASH = re.compile(
@@ -58,7 +70,7 @@ def ask(request: dict, wait_s: float) -> dict | None:
     except OSError:
         return None
     with sock:
-        sock.sendall((json.dumps(request) + "\n").encode())
+        sock.sendall((json.dumps({**request, "token": token()}) + "\n").encode())
         sock.settimeout(wait_s)
         buf = b""
         try:
@@ -78,7 +90,7 @@ def ask(request: dict, wait_s: float) -> dict | None:
 def tell(event: dict):
     try:
         with socket.create_connection((HOST, PORT), timeout=0.5) as sock:
-            sock.sendall((json.dumps({"kind": "event", **event}) + "\n").encode())
+            sock.sendall((json.dumps({"kind": "event", "token": token(), **event}) + "\n").encode())
     except OSError:
         pass
 

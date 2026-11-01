@@ -257,6 +257,15 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(state.target?.id, "b")
     }
 
+    func testTheTokenIsReadFreshAndAMissingFileIsEmpty() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("token-\(UUID().uuidString)")
+        setenv("NOTCH_TOKEN_FILE", url.path, 1)
+        defer { unsetenv("NOTCH_TOKEN_FILE") }
+        XCTAssertEqual(BridgeToken.read, "")
+        try! "secret\n".write(to: url, atomically: true, encoding: .utf8)
+        XCTAssertEqual(BridgeToken.read, "secret")
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

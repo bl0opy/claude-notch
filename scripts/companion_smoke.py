@@ -20,6 +20,9 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 PORTS = {"AGENTS_WS_PORT": "18777", "NOTCH_INBOX_PORT": "18776", "AGENTS_WINDOW_PORT": "18778"}
+os.environ["NOTCH_TOKEN_FILE"] = str(Path(tempfile.mkdtemp()) / "token")
+from backend import auth  # noqa: E402
+
 SESSION = "11111111-2222-3333-4444-555555555555"
 HOST_SESSION = "local_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 failures = 0
@@ -98,7 +101,19 @@ async def main() -> int:
     )
     try:
         await asyncio.sleep(2.5)
-        async with websockets.connect(f"ws://127.0.0.1:{PORTS['AGENTS_WS_PORT']}", max_size=None) as ws:
+        roster_url = f"ws://127.0.0.1:{PORTS['AGENTS_WS_PORT']}"
+        for label, extra in [
+            ("no token is turned away", {}),
+            ("a wrong token is turned away", {"additional_headers": {"Authorization": "Bearer nope"}}),
+            ("the page's Origin alone is turned away", {"origin": f"http://127.0.0.1:{PORTS['AGENTS_WINDOW_PORT']}"}),
+        ]:
+            try:
+                async with websockets.connect(roster_url, **extra):
+                    check(label, False, "handshake accepted")
+            except websockets.InvalidStatus as e:
+                check(label, e.response.status_code == 401, str(e))
+
+        async with websockets.connect(roster_url, max_size=None, additional_headers=auth.headers()) as ws:
             roster = await first(ws, "agents", lambda m: m.get("list"))
             row = (roster.get("list") or [{}])[0]
             check("a desktop session is shown as one", row.get("host") == "desktop", row)
@@ -112,10 +127,21 @@ async def main() -> int:
             roles = [r["role"] for r in chat.get("rows", [])]
             check("its chat: you, claude, the tool, no reminders", roles == ["you", "claude", "tool"], chat)
 
+            question = {
+                "kind": "permission", "source": "terminal", "session_id": SESSION, "cwd": cwd,
+                "pid": os.getpid(), "tool": "Bash", "input": {"command": "rm -r build/old"},
+            }
+            r, w = await asyncio.open_connection("127.0.0.1", int(PORTS["NOTCH_INBOX_PORT"]))
+            w.write((json.dumps(question) + "\n").encode())
+            await w.drain()
+            check("a hook line without the token puts up no card", await asyncio.wait_for(r.read(), timeout=5) == b"")
+            w.close()
+
             reader, writer = await asyncio.open_connection("127.0.0.1", int(PORTS["NOTCH_INBOX_PORT"]))
             writer.write((json.dumps({
                 "kind": "permission", "source": "terminal", "session_id": SESSION, "cwd": cwd,
                 "pid": os.getpid(), "tool": "Bash", "input": {"command": "rm -r build/old"},
+                "token": auth.token(),
                 "suggestions": [{"type": "addRules", "rules": [{"toolName": "Bash", "ruleContent": "rm -r build/*"}],
                                  "behavior": "allow", "destination": "localSettings"}],
             }) + "\n").encode())

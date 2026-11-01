@@ -10,13 +10,16 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import websockets
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+os.environ["NOTCH_TOKEN_FILE"] = str(Path(tempfile.mkdtemp()) / "token")
 
+from backend import auth  # noqa: E402
 from agentsd.registry import live_sessions  # noqa: E402
 from backend.claude_code import ClaudeCodeSession  # noqa: E402
 
@@ -56,7 +59,7 @@ async def main() -> int:
             print("FAIL the session never showed up in the registry")
             return 1
 
-        async with websockets.connect(f"ws://127.0.0.1:{PORTS['AGENTS_WS_PORT']}") as ws:
+        async with websockets.connect(f"ws://127.0.0.1:{PORTS['AGENTS_WS_PORT']}", additional_headers=auth.headers()) as ws:
             await ws.send(json.dumps({"type": "type", "id": "no-such-session", "text": "hi"}))
             gone = await typed(ws, "no-such-session")
             ok = gone.get("status") == "gone"

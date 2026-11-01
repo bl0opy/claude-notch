@@ -22,6 +22,7 @@ from agentsd.supervisor import Supervisor
 from agentsd.transcripts import Transcripts
 from agentsd.turns import TurnEnds
 from agentsd.window import WindowServer, page_origins
+from backend import auth
 from backend.bridge import NotchBridge
 
 # Esc is a keypress the TUI has to read and act on before the next line lands,
@@ -75,6 +76,7 @@ async def serve():
         owned_timeout_s=config.owned_timeout_s,
         terminal_timeout_s=config.terminal_timeout_s,
         helper_pids=supervisor.own_pids,
+        token=auth.token(),
     )
 
     async def on_approve(msg):

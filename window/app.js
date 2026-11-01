@@ -66,6 +66,9 @@ function send(msg) {
   else toast('The agents daemon is not connected.');
 }
 
+// The notch's window sets this; the server won't hand it to just anyone.
+const withToken = (url) => `${url}?token=${encodeURIComponent(window.notchToken || '')}`;
+
 async function connectRoster() {
   let url = `ws://${location.hostname}:8767`;
   try {
@@ -81,7 +84,7 @@ async function connectRoster() {
   }
   let delay = 500;
   const open = () => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(withToken(url));
     state.roster = ws;
     ws.onopen = () => {
       delay = 500;
@@ -269,7 +272,7 @@ function sendPty(entry, msg) {
 }
 
 function connectPty(id, entry) {
-  const ws = new WebSocket(`ws://${location.host}/pty/${id}`);
+  const ws = new WebSocket(withToken(`ws://${location.host}/pty/${id}`));
   entry.ws = ws;
   ws.onopen = () => {
     fit(entry);

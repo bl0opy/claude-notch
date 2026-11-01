@@ -78,6 +78,19 @@ enum Settings {
     }
 }
 
+/// The secret the Python side's sockets ask for (backend/auth.py), which it
+/// makes when it starts. Read on every connect, since it may not exist yet.
+enum BridgeToken {
+    static var read: String {
+        let env = ProcessInfo.processInfo.environment["NOTCH_TOKEN_FILE"] ?? ""
+        let path = env.isEmpty
+            ? NSHomeDirectory() + "/Library/Application Support/notch-agent/bridge-token"
+            : env
+        return ((try? String(contentsOfFile: path, encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// Where the Python side listens: the same environment variables it reads, so
 /// moving a port in the environment `run.sh` starts from moves it everywhere.
 enum Ports {

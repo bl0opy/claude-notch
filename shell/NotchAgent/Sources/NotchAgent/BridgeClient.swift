@@ -26,7 +26,9 @@ final class BridgeClient: MessageSink {
 
     func connect() {
         stopped = false
-        let task = session.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(BridgeToken.read)", forHTTPHeaderField: "Authorization")
+        let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
         receive()

@@ -14,6 +14,7 @@ Hooks also send fire-and-forget `event` lines (turn stopped), which become
 `fleet_event` broadcasts the voice backend turns into speech.
 """
 import asyncio
+import hmac
 import json
 import os
 import time
@@ -100,7 +101,7 @@ def _alive(pid: int) -> bool:
 
 class Inbox:
     def __init__(self, host: str, port: int, broadcast, owned_timeout_s: float, terminal_timeout_s: float,
-                 helper_pids: set[int] | None = None):
+                 helper_pids: set[int] | None = None, token: str = ""):
         self.host = host
         self.port = port
         self._broadcast = broadcast
@@ -108,6 +109,9 @@ class Inbox:
         self._terminal_timeout = terminal_timeout_s
         self._pending: dict[str, Pending] = {}
         self._server: asyncio.Server | None = None
+        # Set, a hook has to show it: a card is something you'll click on, so
+        # not just anything on this machine gets to put one up.
+        self._token = token
         # Helper Claude processes, which don't belong on the roster.
         self._helper_pids = helper_pids if helper_pids is not None else set()
         self._busy_since: dict[int, float] = {}
@@ -197,6 +201,11 @@ class Inbox:
             msg = json.loads(raw or b"{}")
         except (asyncio.TimeoutError, json.JSONDecodeError, ConnectionError) as e:
             logger.warning(f"bad hook line: {e}")
+            writer.close()
+            return
+
+        if self._token and not hmac.compare_digest(str(msg.get("token") or "").encode(), self._token.encode()):
+            logger.warning("a hook line without the token was dropped — scripts/install-hooks.sh updates the hook")
             writer.close()
             return
 
