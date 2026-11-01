@@ -11,6 +11,7 @@ import sys
 
 from loguru import logger
 
+from agentsd import chat
 from agentsd.config import config, default_agent_path
 from agentsd.inbox import Inbox
 from agentsd.peer import Messenger
@@ -49,12 +50,23 @@ async def serve():
         config.ws_host, config.window_port, pty, f"ws://{config.ws_host}:{config.ws_port}"
     )
     turn_ends = TurnEnds()
+    last: dict | None = None
+
+    def row_of(session_id: str) -> dict | None:
+        return next((r for r in (last or {}).get("list") or [] if r["id"] == session_id), None)
+
+    async def with_reply(event: dict) -> dict:
+        """A finished turn carries the first line of what it answered."""
+        row = row_of(event.get("sessionId") or "")
+        if event.get("event") == "done" and row:
+            event["line"] = await asyncio.to_thread(chat.last_reply, row["cwd"], row["id"])
+        return event
 
     async def announce(message: dict):
         # The Stop hook's "done" and the roster's are one turn; say it once.
         message = turn_ends.filter(message)
         if message:
-            await bridge.send(message)
+            await bridge.send(await with_reply(message))
 
     inbox = Inbox(
         config.ws_host,
@@ -72,11 +84,17 @@ async def serve():
             how=str(msg.get("how") or "from the notch"),
         )
 
-    last: dict | None = None
-
     def row_state(session_id: str) -> str:
-        rows = (last or {}).get("list") or []
-        return next((r["state"] for r in rows if r["id"] == session_id), "unknown")
+        row = row_of(session_id)
+        return row["state"] if row else "unknown"
+
+    async def on_chat(msg):
+        """The conversation so far in one session, for the notch's panel."""
+        row = row_of(str(msg.get("id") or ""))
+        if not row:
+            return
+        rows = await asyncio.to_thread(chat.chat, row["cwd"], row["id"])
+        await bridge.send({"type": "chat", "id": row["id"], "rows": rows})
 
     async def fail(message: str):
         logger.warning(message)
@@ -162,6 +180,7 @@ async def serve():
     bridge.on("forget", on_forget)
     bridge.on("interrupt", on_interrupt)
     bridge.on("type", on_type)
+    bridge.on("chat", on_chat)
     pty.on_change = lambda: asyncio.create_task(bridge.send(pty.snapshot()))
     await bridge.start()
     await inbox.start()
@@ -178,7 +197,7 @@ async def serve():
                 await bridge.send(snapshot)
                 last = snapshot
             for event in turn_ends.update(snapshot["list"]):
-                await bridge.send(event)
+                await bridge.send(await with_reply(event))
             await inbox.reconcile()
             await deliver_held()
             try:

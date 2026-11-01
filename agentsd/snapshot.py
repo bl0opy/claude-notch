@@ -3,6 +3,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from agentsd import desktop
 from agentsd.config import config
 from agentsd.registry import LiveSession, live_sessions
 from agentsd.transcripts import Transcripts
@@ -74,8 +75,16 @@ def _row(session: LiveSession, transcripts: Transcripts, owned: set[str], hosted
     rollup = transcripts.rollup(session.cwd, session.session_id).as_dict()
     if not config.send_details:
         rollup["activityDetail"] = ""
-    # A session the daemon runs in its own pty is shown in the terminal window.
-    tty, host = ("", "window") if session.session_id in hosted else host_of(session.pid)
+    # A session the daemon runs in its own pty is shown in the terminal window,
+    # and a Code tab in the Claude app by the app.
+    app = None
+    if session.session_id in hosted:
+        tty, host = "", "window"
+    elif session.entrypoint == desktop.ENTRYPOINT:
+        tty, host = "", "desktop"
+        app = desktop.app_session(session.host_session_id)
+    else:
+        tty, host = host_of(session.pid)
     return {
         "id": session.session_id,
         "tty": tty,
@@ -88,6 +97,8 @@ def _row(session: LiveSession, transcripts: Transcripts, owned: set[str], hosted
         "waitingFor": session.waiting_for,
         "reachable": session.reachable,
         "owned": session.session_id in owned,
+        "link": desktop.link(session.host_session_id) if host == "desktop" else "",
+        **(app.as_dict() if app else {}),
         **rollup,
     }
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from agentsd import risk
+from agentsd import chat, risk
 from agentsd.registry import from_registry
 from agentsd.snapshot import project_name
 from agentsd.turns import DONE_AFTER_S
@@ -40,6 +40,8 @@ class Pending:
     input: dict
     suggestions: list
     created: float = field(default_factory=time.time)
+    # What the agent said before asking, from its transcript.
+    why: str = ""
     future: asyncio.Future | None = None
     # Seen the session's dialog up. Only then does it closing mean anything.
     armed: bool = False
@@ -57,8 +59,26 @@ class Pending:
             "summary": risk.summary(self.tool, self.input),
             "risky": risk.destructive(self.tool, self.input),
             "canAlways": bool(self.suggestions),
+            "always": always_label(self.suggestions),
+            "why": self.why,
             "created": int(self.created * 1000),
         }
+
+
+def always_label(suggestions: list) -> str:
+    """What "always" would add, as Claude Code writes rules: `Bash(npm test:*)`."""
+    rules = []
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        if suggestion.get("type") == "addDirectories":
+            rules += [f"access to {d}" for d in suggestion.get("directories") or []]
+            continue
+        for rule in suggestion.get("rules") or []:
+            tool, content = rule.get("toolName") or "", rule.get("ruleContent") or ""
+            if tool:
+                rules.append(f"{tool}({content})" if content else tool)
+    return ", ".join(rules)
 
 
 def _alive(pid: int) -> bool:
@@ -173,6 +193,8 @@ class Inbox:
             suggestions=msg.get("suggestions") or [],
             future=asyncio.get_running_loop().create_future(),
         )
+        if pending.session_id and pending.cwd:
+            pending.why = await asyncio.to_thread(chat.why, pending.cwd, pending.session_id)
         timeout = self._owned_timeout if pending.source == "owned" else self._terminal_timeout
         self._pending[pending.id] = pending
         await self._changed()
