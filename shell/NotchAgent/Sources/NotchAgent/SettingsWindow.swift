@@ -15,7 +15,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -64,7 +64,9 @@ private struct SettingsView: View {
     @State private var agentPath = Settings.defaultAgentPath
     @State private var foldAfter = Settings.foldAfterSeconds
     @State private var sounds = Settings.sounds(voice: Settings.voice)
+    @State private var hostedAgents = Settings.hostedAgents
     private let voiceAtLaunch = Settings.voice
+    private let hostedAtLaunch = Settings.hostedAgents
 
     private static let foldChoices: [(String, Double)] = [
         ("30 seconds", 30), ("1 minute", 60), ("5 minutes", 300), ("15 minutes", 900), ("never", 0),
@@ -112,15 +114,31 @@ private struct SettingsView: View {
                     .onChange(of: sounds) { _, value in Settings.set("sounds", value) }
             }
 
-            section("new agents start in") {
-                HStack(spacing: 8) {
-                    TextField("~", text: $agentPath)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
-                        .onSubmit { Settings.set("default_agent_path", agentPath) }
-                    Button("Choose…", action: choose)
+            section("agents") {
+                Toggle("start agents from the notch, in its own terminal window", isOn: $hostedAgents)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.system(size: 11))
+                    .onChange(of: hostedAgents) { _, value in Settings.set("hosted_agents", value) }
+                note(hostedAgents
+                     ? "A + after the sessions in the panel starts one."
+                     : "Off, the notch watches and answers the sessions you already run.")
+                if hostedAgents != hostedAtLaunch {
+                    note("Restart ./run.sh for this to take effect.", tint: AgentPhase.waiting.tint)
                 }
-                note("Bare names like bus-tracker are taken relative to this.")
+            }
+
+            if hostedAgents {
+                section("new agents start in") {
+                    HStack(spacing: 8) {
+                        TextField("~", text: $agentPath)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                            .onSubmit { Settings.set("default_agent_path", agentPath) }
+                        Button("Choose…", action: choose)
+                    }
+                    note("Bare names like bus-tracker are taken relative to this.")
+                }
             }
 
             section("fold into the notch after") {
@@ -147,7 +165,7 @@ private struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 460, height: 480, alignment: .topLeading)
+        .frame(width: 460, height: 560, alignment: .topLeading)
         .onDisappear { Settings.set("default_agent_path", agentPath) }
     }
 
