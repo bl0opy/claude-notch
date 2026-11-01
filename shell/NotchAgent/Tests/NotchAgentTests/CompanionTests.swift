@@ -117,6 +117,50 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(state.notice?.line, "orbit done after 5 minutes")
     }
 
+    func testShowsWithTheAppOrWhenThereIsNoAppToFollow() {
+        XCTAssertTrue(ClaudeApp.shouldShow(follow: true, installed: true, running: true))
+        XCTAssertFalse(ClaudeApp.shouldShow(follow: true, installed: true, running: false))
+        XCTAssertTrue(ClaudeApp.shouldShow(follow: true, installed: false, running: false))
+        XCTAssertTrue(ClaudeApp.shouldShow(follow: false, installed: true, running: false))
+    }
+
+    func testFollowingTheAppIsOnUnlessTurnedOff() {
+        useSettings([:])
+        XCTAssertTrue(Settings.followClaudeApp)
+        useSettings(["follow_claude_app": false])
+        XCTAssertFalse(Settings.followClaudeApp)
+    }
+
+    func testHidingLetsGoOfTheCursorAndKeyboard() {
+        let (state, _, _) = makeState(["voice": false])
+        state.hovering = true
+        state.requestCompose()
+        state.setHidden(true)
+        XCTAssertFalse(state.hovering)
+        XCTAssertFalse(state.composing)
+    }
+
+    func testAHiddenNotchMakesNoSound() {
+        let (state, _, _) = makeState(["voice": false])
+        var played: [AgentState.Chime] = []
+        state.play = { played.append($0) }
+        state.apply(["type": "approvals", "list": []])
+        state.setHidden(true)
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        XCTAssertTrue(played.isEmpty)
+        state.setHidden(false)
+        state.apply(["type": "approvals", "list": [approvalRow("a1"), approvalRow("a2")]])
+        XCTAssertEqual(played, [.attention])
+    }
+
+    func testComingBackIsThePillNotFolded() {
+        let (state, _, _) = makeState(["voice": false, "notch_fold_after": 1])
+        state.apply(["type": "agents", "list": []])
+        state.setHidden(true)
+        state.setHidden(false)
+        XCTAssertFalse(state.dormant)
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

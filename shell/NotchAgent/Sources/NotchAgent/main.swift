@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mouse: MouseTracker?
     private let pushToTalk = PushToTalk()
     private var watchers: Set<AnyCancellable> = []
+    private var appObservers: [NSObjectProtocol] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -27,7 +28,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             rootView: NotchView(state: state, geometry: geometry) { tracker.island = $0 }
         )
         window.setFrame(frame, display: true)
-        window.orderFrontRegardless()
         self.window = window
         tracker.install(on: window)
         mouse = tracker
@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentsClient.connect()
 
         state.startClock()
+        followClaudeApp()
         installHotKey()
 
         if state.voice {
@@ -115,10 +116,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 
+    /// Up while the Claude app is open, and put away when it quits.
+    private func followClaudeApp() {
+        applyVisibility()
+        appObservers = ClaudeApp.observe { [weak self] in self?.applyVisibility() }
+        NotificationCenter.default.publisher(for: Settings.changed)
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &watchers)
+    }
+
+    private func applyVisibility() {
+        let show = ClaudeApp.shouldShowNow
+        guard show == state.hidden || window?.isVisible != show else { return }
+        state.setHidden(!show)
+        if show {
+            window?.orderFrontRegardless()
+        } else {
+            window?.orderOut(nil)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         client?.disconnect()
         agentsClient?.disconnect()
         if let monitor = hotKeyMonitor { NSEvent.removeMonitor(monitor) }
+        appObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         pushToTalk.uninstall()
         mouse?.uninstall()
     }
@@ -141,6 +163,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleHotKey(flags: NSEvent.ModifierFlags, code: UInt16) {
+        guard !state.hidden else { return }
         if flags.contains(.option), !flags.contains(.control), code == 49 {
             state.interrupt()
             return

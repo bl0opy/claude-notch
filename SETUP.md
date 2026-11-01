@@ -32,6 +32,11 @@ scripts/install-hooks.sh           # add the permission hook to ~/.claude/settin
   is backed up to `~/.claude/settings.json.bak-notch` either way.
 - Optional: `scripts/install-agentsd.sh` runs the daemon at login under launchd,
   so approvals work without `./run.sh`.
+- Optional: `scripts/install-notch.sh` does the same for the notch, and installs the
+  daemon if it isn't yet. The notch stays hidden until the Claude desktop app opens
+  and goes away when it quits; turn that off with "only while the Claude app is open"
+  in Settings, or `"follow_claude_app": false`. Without the app installed it's always
+  up. Quitting it from its right-click menu keeps it off until your next login.
 
 ## Running
 

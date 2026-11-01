@@ -72,6 +72,10 @@ final class MouseTracker {
 
     private func update() {
         guard let window else { return }
+        guard window.isVisible else {
+            window.ignoresMouseEvents = true
+            return
+        }
         let cursor = NSEvent.mouseLocation
         // The screen's top edge counts as inside: the cursor pinned against it
         // above the notch is aiming for the notch. Folded, the island is only

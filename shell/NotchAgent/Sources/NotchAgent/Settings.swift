@@ -58,6 +58,11 @@ enum Settings {
         (load()["hosted_agents"] as? Bool) ?? false
     }
 
+    /// Keep the notch up only while the Claude desktop app is open.
+    static var followClaudeApp: Bool {
+        (load()["follow_claude_app"] as? Bool) ?? true
+    }
+
     /// Where "New agent…" starts you off. Home if it isn't set.
     static var defaultAgentPath: String {
         (load()["default_agent_path"] as? String) ?? "~"

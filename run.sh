@@ -16,6 +16,9 @@ die() { echo "run.sh: $*" >&2; exit 1; }
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 listener_pid() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1; }
 launchd_owns_daemon() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
+NOTCH_LABEL=com.notchagent.notch
+NOTCH_PLIST="$HOME/Library/LaunchAgents/$NOTCH_LABEL.plist"
+NOTCH_STEPPED_ASIDE=
 
 wait_for_port() {
   for _ in $(seq 1 50); do
@@ -60,6 +63,9 @@ cleanup() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
+  if [ -n "$NOTCH_STEPPED_ASIDE" ]; then
+    launchctl bootstrap "gui/$(id -u)" "$NOTCH_PLIST" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -107,6 +113,12 @@ if [ "$VOICE" = True ]; then
   done
 fi
 
+# One notch at a time: the login one steps aside, and comes back on the way out.
+if launchctl print "gui/$(id -u)/$NOTCH_LABEL" >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/$NOTCH_LABEL" 2>/dev/null || true
+  NOTCH_STEPPED_ASIDE=1
+fi
+
 NOTCH_SETTINGS="$PWD/settings.json" "$SHELL_DIR/.build/release/NotchAgent" > >(tee -a "$LOGS/shell.log") 2>&1 &
 NOTCH=$!
 PIDS+=($NOTCH)
@@ -114,9 +126,8 @@ PIDS+=($NOTCH)
 cat <<EOF
 
   notch agent is up
-  terminal window   http://127.0.0.1:$WINDOW_PORT  (or ◎ → Terminal window)
-  new agent         + agent in the notch, or type a path in the window
-  $([ "$VOICE" = True ] && echo "talk              hold your talk key (◎ → Settings…)" || echo "voice             off — ⌃⌥T types to an agent")
+  settings, quit    right-click the notch
+  $([ "$VOICE" = True ] && echo "talk              hold your talk key" || echo "voice             off — ⌃⌥T types to an agent")
   type              ⌃⌥T from any app
   logs              $LOGS
 

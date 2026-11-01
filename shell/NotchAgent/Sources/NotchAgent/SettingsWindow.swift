@@ -15,7 +15,7 @@ final class SettingsWindow: NSObject, NSWindowDelegate {
             return
         }
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 620),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -65,6 +65,7 @@ private struct SettingsView: View {
     @State private var foldAfter = Settings.foldAfterSeconds
     @State private var sounds = Settings.sounds(voice: Settings.voice)
     @State private var hostedAgents = Settings.hostedAgents
+    @State private var followApp = Settings.followClaudeApp
     private let voiceAtLaunch = Settings.voice
     private let hostedAtLaunch = Settings.hostedAgents
 
@@ -112,6 +113,14 @@ private struct SettingsView: View {
                     .controlSize(.small)
                     .font(.system(size: 11))
                     .onChange(of: sounds) { _, value in Settings.set("sounds", value) }
+            }
+
+            section("when to show") {
+                Toggle("only while the Claude app is open", isOn: $followApp)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .font(.system(size: 11))
+                    .onChange(of: followApp) { _, value in Settings.set("follow_claude_app", value) }
             }
 
             section("agents") {
@@ -165,7 +174,7 @@ private struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 460, height: 560, alignment: .topLeading)
+        .frame(width: 460, height: 620, alignment: .topLeading)
         .onDisappear { Settings.set("default_agent_path", agentPath) }
     }
 

@@ -82,6 +82,9 @@ final class AgentState: ObservableObject {
     /// Questions you've waved away for now. The panel stops opening for them,
     /// and opens again for the next new one.
     @Published var snoozed: Set<String> = []
+    /// Put away because the Claude app isn't open. Sessions keep being watched,
+    /// so it's current the moment it comes back.
+    private(set) var hidden = false
     @Published var hovering: Bool = false {
         didSet {
             // Moving over the lingering panel and away is how you dismiss it.
@@ -211,6 +214,18 @@ final class AgentState: ObservableObject {
     func startClock() {
         clock = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.settle() }
+        }
+    }
+
+    func setHidden(_ value: Bool) {
+        hidden = value
+        if value {
+            hovering = false
+            endCompose()
+        } else {
+            // Coming back is news: stay out as the pill, not folded away.
+            lastBusy = Date()
+            settle()
         }
     }
 
@@ -371,7 +386,7 @@ final class AgentState: ObservableObject {
     var play: (Chime) -> Void = { NSSound(named: NSSound.Name($0.rawValue))?.play() }
     private var approvalsLoaded = false
     private func chime(_ sound: Chime) {
-        guard Settings.sounds(voice: voice) else { return }
+        guard !hidden, Settings.sounds(voice: voice) else { return }
         play(sound)
     }
 

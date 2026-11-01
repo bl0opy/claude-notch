@@ -142,6 +142,7 @@ That's everything. Then, optionally:
 ```bash
 scripts/install-hooks.sh     # answer every session's permission prompts from the notch
 scripts/install-agentsd.sh   # run the agents daemon at login (launchd)
+scripts/install-notch.sh     # run the notch at login too; it shows while the Claude app is open
 ```
 
 **Permissions.** System Settings → Privacy & Security → **Accessibility**: allow
@@ -157,8 +158,8 @@ the backend opens it.
 ```
 
 That builds the shell, starts the agents daemon (unless launchd already runs
-it), the voice backend (unless voice is off), and the notch. Ctrl-C, or quitting the notch from its
-menu bar item (◎), stops everything it started. If the repo has moved, `run.sh`
+it), the voice backend (unless voice is off), and the notch. Ctrl-C, or quitting the notch by
+right-clicking it, stops everything it started. If the repo has moved, `run.sh`
 clears SwiftPM's stale cache and builds again.
 
 Pieces on their own:
