@@ -143,6 +143,7 @@ That's everything. Then, optionally:
 scripts/install-hooks.sh     # answer every session's permission prompts from the notch
 scripts/install-agentsd.sh   # run the agents daemon at login (launchd)
 scripts/install-notch.sh     # run the notch at login too; it shows while the Claude app is open
+scripts/install-mcp.sh       # give every session notch_ask and notch_show
 ```
 
 **Permissions.** System Settings → Privacy & Security → **Accessibility**: allow

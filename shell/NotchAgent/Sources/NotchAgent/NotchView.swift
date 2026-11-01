@@ -63,7 +63,14 @@ struct NotchView: View {
                 expanded
                     .transition(.island)
             } else if mode == .question {
-                ApprovalStack(state: state)
+                VStack(alignment: .leading, spacing: 8) {
+                    if !state.approvals.isEmpty {
+                        ApprovalStack(state: state)
+                    }
+                    ForEach(state.unseenCards) { card in
+                        CardView(state: state, card: card)
+                    }
+                }
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
                     .padding(.bottom, 16)
@@ -112,9 +119,12 @@ struct NotchView: View {
             if mode != .dormant {
                 HStack(spacing: 6) {
                     StatusDot(phase: state.phase, live: state.micOpen)
-                    if !state.approvals.isEmpty {
-                        PendingBadge(count: state.approvals.count)
-                            .onTapGesture { state.snoozed = [] }
+                    if state.waitingOnYou > 0 {
+                        PendingBadge(count: state.waitingOnYou)
+                            .onTapGesture {
+                                state.snoozed = []
+                                state.snoozedCards = []
+                            }
                     }
                 }
                 .padding(.leading, 14)
@@ -137,6 +147,9 @@ struct NotchView: View {
         VStack(alignment: .leading, spacing: 10) {
             if !state.approvals.isEmpty {
                 ApprovalStack(state: state)
+            }
+            ForEach(state.cards) { card in
+                CardView(state: state, card: card)
             }
             HStack(alignment: .top, spacing: 14) {
                 SessionSidebar(state: state)

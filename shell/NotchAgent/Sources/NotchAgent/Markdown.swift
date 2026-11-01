@@ -9,6 +9,7 @@ enum MarkdownBlock: Equatable {
     case numbered(String, text: String)
     case quote(String)
     case code(String)
+    case diff(String)
     case table([[String]])
     case rule
 
@@ -16,6 +17,7 @@ enum MarkdownBlock: Equatable {
         var blocks: [MarkdownBlock] = []
         var paragraph: [String] = []
         var code: [String]?
+        var codeIsDiff = false
         var table: [[String]] = []
 
         func flushParagraph() {
@@ -31,12 +33,14 @@ enum MarkdownBlock: Equatable {
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("```") {
                 if let open = code {
-                    blocks.append(.code(open.joined(separator: "\n")))
+                    let text = open.joined(separator: "\n")
+                    blocks.append(codeIsDiff ? .diff(text) : .code(text))
                     code = nil
                 } else {
                     flushParagraph()
                     flushTable()
                     code = []
+                    codeIsDiff = trimmed.dropFirst(3).trimmingCharacters(in: .whitespaces) == "diff"
                 }
                 continue
             }
@@ -78,7 +82,10 @@ enum MarkdownBlock: Equatable {
         flushParagraph()
         flushTable()
         // A reply clipped partway through a fence still shows what it has.
-        if let open = code { blocks.append(.code(open.joined(separator: "\n"))) }
+        if let open = code {
+            let text = open.joined(separator: "\n")
+            blocks.append(codeIsDiff ? .diff(text) : .code(text))
+        }
         return blocks
     }
 
@@ -156,11 +163,29 @@ struct MarkdownText: View {
                 .padding(.horizontal, 9).padding(.vertical, 7)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.11)))
+        case .diff(let text):
+            VStack(alignment: .leading, spacing: 1) {
+                ForEach(Array(text.components(separatedBy: "\n").enumerated()), id: \.offset) { _, row in
+                    Text(row.isEmpty ? " " : row)
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(diffColor(row))
+                }
+            }
+            .textSelection(.enabled)
+            .padding(.horizontal, 9).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.11)))
         case .table(let rows):
             table(rows)
         case .rule:
             Rectangle().fill(Color(white: 0.2)).frame(height: 1)
         }
+    }
+
+    private func diffColor(_ row: String) -> Color {
+        if row.hasPrefix("+") { return Color(red: 0.45, green: 0.85, blue: 0.55) }
+        if row.hasPrefix("-") { return Color(red: 1.0, green: 0.5, blue: 0.48) }
+        return Color(white: 0.6)
     }
 
     private func line(_ text: String, weight: Font.Weight = .regular, size: CGFloat = 12, color: Color? = nil) -> some View {

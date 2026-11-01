@@ -340,6 +340,100 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(fleet.types, ["approve"], "no still works")
     }
 
+    private func askCard(_ id: String = "c1", session: String = "s1") -> [String: Any] {
+        ["id": id, "kind": "ask", "project": "orbit", "sessionId": session, "title": "How?", "fields": [
+            ["name": "mode", "label": "Mode", "type": "choice", "options": ["A", "B"]],
+            ["name": "size", "label": "Size", "type": "number", "min": 10, "max": 20, "step": 1],
+            ["name": "on", "label": "On", "type": "toggle", "default": true],
+            ["name": "tags", "label": "Tags", "type": "multichoice", "options": ["x", "y", "z"]],
+            ["name": "note", "label": "Note", "type": "text"],
+        ]]
+    }
+
+    func testAFormDropsDownAndWaitsOnYou() {
+        let (state, _, _) = makeState(["voice": false])
+        var played: [AgentState.Chime] = []
+        state.play = { played.append($0) }
+        state.apply(["type": "cards", "list": [askCard()]])
+        XCTAssertEqual(state.islandMode, .question)
+        XCTAssertEqual(state.waitingOnYou, 1)
+        XCTAssertEqual(played, [.attention])
+    }
+
+    func testAFormOnlySendsOnceEveryFieldIsFilled() {
+        let (state, _, fleet) = makeState(["voice": false])
+        state.apply(["type": "cards", "list": [askCard()]])
+        let card = state.cards[0]
+        XCTAssertFalse(state.canSend(card))
+        state.send(card)
+        XCTAssertTrue(fleet.sent.isEmpty)
+
+        state.set(.choice("B"), for: card.fields[0], in: card)
+        state.set(.many(["z", "x"]), for: card.fields[3], in: card)
+        state.set(.text("  "), for: card.fields[4], in: card)
+        XCTAssertFalse(state.canSend(card), "blank text isn't an answer")
+        state.set(.text("hi"), for: card.fields[4], in: card)
+        XCTAssertTrue(state.canSend(card))
+
+        state.send(card)
+        XCTAssertEqual(fleet.types, ["card_answer"])
+        let answers = fleet.sent[0]["answers"] as? [String: Any]
+        XCTAssertEqual(answers?["mode"] as? String, "B")
+        XCTAssertEqual(answers?["size"] as? Double, 10, "a slider starts at its minimum")
+        XCTAssertEqual(answers?["on"] as? Bool, true)
+        XCTAssertEqual(answers?["tags"] as? [String], ["x", "z"], "in the field's order")
+        XCTAssertEqual(answers?["note"] as? String, "hi")
+        XCTAssertTrue(state.cards.isEmpty)
+    }
+
+    func testDismissingTellsTheDaemon() {
+        let (state, _, fleet) = makeState(["voice": false])
+        state.apply(["type": "cards", "list": [askCard()]])
+        state.dismiss(state.cards[0])
+        XCTAssertEqual(fleet.types, ["card_dismiss"])
+        XCTAssertTrue(state.cards.isEmpty)
+    }
+
+    func testAPassiveCardDropsDownButWaitsOnNobody() {
+        let (state, _, _) = makeState(["voice": false])
+        var played: [AgentState.Chime] = []
+        state.play = { played.append($0) }
+        state.apply(["type": "cards", "list": [["id": "c", "kind": "show", "title": "Uploading", "progress": 0.5]]])
+        XCTAssertEqual(state.islandMode, .question)
+        XCTAssertEqual(state.waitingOnYou, 0)
+        XCTAssertEqual(state.cards[0].progress, 0.5)
+        XCTAssertTrue(played.isEmpty)
+    }
+
+    func testInTheClaudeAppAFormIsACountAndAPassiveCardIsNothing() {
+        let (state, _, _) = makeState(["voice": false])
+        state.claudeInFront = true
+        state.apply(["type": "cards", "list": [["id": "c", "kind": "show", "title": "Uploading"]]])
+        XCTAssertEqual(state.islandMode, .dormant)
+        state.apply(["type": "cards", "list": [askCard()]])
+        XCTAssertEqual(state.islandMode, .compact)
+    }
+
+    func testAFormPutsItsSessionUnderNeedsYou() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "agents", "list": [desktopRow("a", title: "A"), desktopRow("b", title: "B")]])
+        state.apply(["type": "cards", "list": [askCard(session: "b")]])
+        XCTAssertEqual(state.prioritized.first?.id, "b")
+    }
+
+    func testADraftGoesWithItsCard() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "cards", "list": [askCard()]])
+        state.set(.choice("A"), for: state.cards[0].fields[0], in: state.cards[0])
+        state.apply(["type": "cards", "list": []])
+        XCTAssertTrue(state.cardDrafts.isEmpty)
+    }
+
+    func testDiffFences() {
+        XCTAssertEqual(MarkdownBlock.parse("```diff\n- a\n+ b\n```"), [.diff("- a\n+ b")])
+        XCTAssertEqual(MarkdownBlock.parse("```swift\nlet a\n```"), [.code("let a")])
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)

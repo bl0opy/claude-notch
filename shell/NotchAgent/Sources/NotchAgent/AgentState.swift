@@ -119,6 +119,14 @@ final class AgentState: ObservableObject {
     @Published var notice: Notice?
     private var noticeTimer: Task<Void, Never>?
 
+    /// What sessions have put in the notch with notch_ask and notch_show.
+    @Published var cards: [NotchCard] = []
+    /// Answers so far, kept here so they outlast the card's view when the
+    /// island changes shape around it.
+    @Published var cardDrafts: [String: [String: CardValue]] = [:]
+    /// Waved away for now, like `snoozed`. It only hides the drop-down.
+    @Published var snoozedCards: Set<String> = []
+
     /// Turns that finished since you last looked at them.
     @Published var unread: Set<String> = []
     private var wasExpanded = false
@@ -158,6 +166,7 @@ final class AgentState: ObservableObject {
     /// a turn you haven't seen the end of, then the rest.
     func urgency(_ agent: RemoteAgent) -> Int {
         if agent.state == .waiting || approvals.contains(where: { $0.sessionId == agent.id }) { return 0 }
+        if cards.contains(where: { $0.isAsk && $0.sessionId == agent.id }) { return 0 }
         if !agent.needs.isEmpty { return 1 }
         if unread.contains(agent.id) { return 2 }
         return agent.state == .working ? 3 : 4
@@ -201,8 +210,8 @@ final class AgentState: ObservableObject {
         if expanded { return .expanded }
         // The open tab may be a different session, so a waiting question still
         // shows as a count on the pill. It drops down once you switch away.
-        if claudeInFront { return approvals.isEmpty ? .dormant : .compact }
-        if !unseenApprovals.isEmpty { return .question }
+        if claudeInFront { return approvals.isEmpty && !cards.contains(where: \.isAsk) ? .dormant : .compact }
+        if !unseenApprovals.isEmpty || !unseenCards.isEmpty { return .question }
         if notice != nil { return .notice }
         return dormant ? .dormant : .compact
     }
@@ -221,7 +230,7 @@ final class AgentState: ObservableObject {
 
     /// Anything that deserves the notch being visible.
     var busy: Bool {
-        if micOpen || !approvals.isEmpty || notice != nil { return true }
+        if micOpen || !approvals.isEmpty || !cards.isEmpty || notice != nil { return true }
         if [.thinking, .speaking, .waiting, .error].contains(phase) { return true }
         return agents.contains { $0.state == .working || $0.state == .waiting }
     }
@@ -285,6 +294,11 @@ final class AgentState: ObservableObject {
         }
     }
 
+    var unseenCards: [NotchCard] { cards.filter { !snoozedCards.contains($0.id) } }
+
+    /// Questions and forms together, for the count on the pill.
+    var waitingOnYou: Int { approvals.count + cards.filter(\.isAsk).count }
+
     var unseenApprovals: [ApprovalRequest] { approvals.filter { !snoozed.contains($0.id) } }
 
     /// The one ⌃⌥Y / ⌃⌥N / ⌃⌥J act on.
@@ -292,7 +306,7 @@ final class AgentState: ObservableObject {
 
     private var client: MessageSink?
     /// The agents daemon holds the approvals, so answers go there, not to the voice backend.
-    private var fleet: MessageSink?
+    private(set) var fleet: MessageSink?
 
     func attach(_ client: MessageSink, fleet: MessageSink) {
         self.client = client
@@ -331,6 +345,13 @@ final class AgentState: ObservableObject {
             // The first list after connecting is what was already waiting, not news.
             if approvalsLoaded, approvals.contains(where: { !before.contains($0.id) }) { chime(.attention) }
             approvalsLoaded = true
+        case "cards":
+            let before = Set(cards.map(\.id))
+            cards = (message["list"] as? [[String: Any]] ?? []).compactMap(NotchCard.init)
+            let live = Set(cards.map(\.id))
+            snoozedCards.formIntersection(live)
+            cardDrafts = cardDrafts.filter { live.contains($0.key) }
+            if cards.contains(where: { $0.isAsk && !before.contains($0.id) }) { chime(.attention) }
         case "tool":
             let event = ToolEvent(
                 id: message["id"] as? String ?? UUID().uuidString,
@@ -530,6 +551,7 @@ final class AgentState: ObservableObject {
 
     func snoozeApprovals() {
         snoozed.formUnion(approvals.map(\.id))
+        snoozedCards.formUnion(cards.filter(\.isAsk).map(\.id))
     }
 
     func jump(to request: ApprovalRequest) {
@@ -572,8 +594,15 @@ final class AgentState: ObservableObject {
 
     /// The notch never activates the app, so a field in it only gets keys
     /// once its window is made key by hand.
-    private func takeKeyboard() {
+    func takeKeyboard() {
         NSApp?.windows.first { $0 is NotchWindow }?.makeKey()
+    }
+
+    /// Back to the app you were in, once a card is done with the keyboard.
+    func returnKeyboard() {
+        guard NSApp?.windows.first(where: { $0 is NotchWindow })?.isKeyWindow == true,
+              let app = NSWorkspace.shared.frontmostApplication, app != .current else { return }
+        app.activate()
     }
 
     func requestCompose() {

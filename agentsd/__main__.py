@@ -12,6 +12,7 @@ import sys
 from loguru import logger
 
 from agentsd import chat
+from agentsd.cards import Cards
 from agentsd.config import config, default_agent_path
 from agentsd.inbox import Inbox
 from agentsd.peer import Messenger
@@ -69,6 +70,7 @@ async def serve():
         if message:
             await bridge.send(await with_reply(message))
 
+    cards = Cards(bridge.send)
     inbox = Inbox(
         config.ws_host,
         config.inbox_port,
@@ -77,6 +79,7 @@ async def serve():
         terminal_timeout_s=config.terminal_timeout_s,
         helper_pids=supervisor.own_pids,
         token=auth.token(),
+        cards=cards,
     )
 
     async def on_approve(msg):
@@ -99,6 +102,13 @@ async def serve():
         task = asyncio.create_task(inbox.explain(str(msg.get("id") or "")))
         explaining.add(task)
         task.add_done_callback(explaining.discard)
+
+    async def on_card_answer(msg):
+        answers = msg.get("answers")
+        cards.answer(str(msg.get("id") or ""), answers if isinstance(answers, dict) else {})
+
+    async def on_card_dismiss(msg):
+        await cards.dismiss(str(msg.get("id") or ""))
 
     async def on_chat(msg):
         """The conversation so far in one session, for the notch's panel."""
@@ -194,13 +204,15 @@ async def serve():
     bridge.on("type", on_type)
     bridge.on("chat", on_chat)
     bridge.on("explain", on_explain)
+    bridge.on("card_answer", on_card_answer)
+    bridge.on("card_dismiss", on_card_dismiss)
     pty.on_change = lambda: asyncio.create_task(bridge.send(pty.snapshot()))
     await bridge.start()
     await inbox.start()
     await window.start()
     logger.info(f"watching claude sessions, {config.tick_s}s tick")
 
-    bridge.on_connect(lambda: [last, inbox.snapshot(), pty.snapshot()])
+    bridge.on_connect(lambda: [last, inbox.snapshot(), cards.snapshot(), pty.snapshot()])
     try:
         while True:
             snapshot = await asyncio.to_thread(
@@ -212,6 +224,7 @@ async def serve():
             for event in turn_ends.update(snapshot["list"]):
                 await bridge.send(await with_reply(event))
             await inbox.reconcile()
+            await cards.expire()
             await deliver_held()
             try:
                 await supervisor.tick(snapshot["list"])

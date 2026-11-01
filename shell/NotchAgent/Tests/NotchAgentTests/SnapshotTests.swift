@@ -132,6 +132,20 @@ final class SnapshotTests: XCTestCase {
         try render("10-multiple-choice", state)
     }
 
+    func testCards() throws {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "cards", "list": [
+            ["id": "c1", "kind": "ask", "project": "orbit", "title": "How should the viewer **load** models?", "fields": [
+                ["name": "mode", "label": "Mode", "type": "choice", "options": ["Stream", "Load all"]],
+                ["name": "cache", "label": "Cache size (MB)", "type": "number", "min": 0, "max": 500, "step": 10, "default": 120],
+                ["name": "draco", "label": "Draco compression", "type": "toggle", "default": true],
+            ]],
+            ["id": "c2", "kind": "show", "project": "Presently", "title": "Uploading to TestFlight", "progress": 0.6,
+             "body": "```diff\n- version 1.4.3\n+ version 1.5.0\n```"],
+        ]])
+        try render("11-cards", state)
+    }
+
     func testDesktopSessionPanel() throws {
         let (state, _, _) = makeState(["voice": false])
         state.apply(["type": "agents", "list": [

@@ -38,6 +38,10 @@ scripts/install-hooks.sh           # add the permission hook to ~/.claude/settin
   Under Claude Code's sandbox the file is only out of reach with `blockReadsOutsideWorkingDirectories`
   on, or with that path in `sandbox.filesystem.denyRead`. Without one of those, a sandboxed
   command can read it and answer permission questions.
+- Optional: `scripts/install-mcp.sh` gives every session two tools: `notch_ask` puts a small
+  form in the notch and waits for your answers, and `notch_show` puts up progress, a table or
+  a diff. Sessions fill in fixed card types and can't send interface code, and an answer only
+  goes back to the session that asked, so neither can approve anything.
 - Optional: `scripts/install-notch.sh` does the same for the notch, and installs the
   daemon if it isn't yet. The notch stays hidden until the Claude desktop app opens
   and goes away when it quits; turn that off with "only while the Claude app is open"
