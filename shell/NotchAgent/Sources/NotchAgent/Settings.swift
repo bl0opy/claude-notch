@@ -34,11 +34,12 @@ enum Settings {
         NotificationCenter.default.post(name: changed, object: nil)
     }
 
-    /// Voice in and out. Off, the notch is typed to, and run.sh doesn't start
-    /// the voice backend at all — which is what lets it run without Apple
-    /// Silicon or the speech models. Read once at launch.
+    /// Voice in and out. Paused for now, so off unless settings.json turns it
+    /// on. Off, the notch is typed to, and run.sh doesn't start the voice
+    /// backend at all, which is what lets it run without Apple Silicon or the
+    /// speech models. Read once at launch.
     static var voice: Bool {
-        (load()["voice"] as? Bool) ?? true
+        (load()["voice"] as? Bool) ?? false
     }
 
     /// A system sound for a new question, a stuck agent or a long turn

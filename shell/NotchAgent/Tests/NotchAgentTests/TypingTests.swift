@@ -154,7 +154,7 @@ final class SettingsTests: XCTestCase {
 
     func testDefaults() {
         useSettings([:])
-        XCTAssertTrue(Settings.voice)
+        XCTAssertFalse(Settings.voice, "voice is paused")
         XCTAssertEqual(Settings.defaultAgentPath, "~")
         XCTAssertEqual(Settings.foldAfter, 300)
         XCTAssertFalse(Settings.sounds(voice: true))

@@ -75,35 +75,44 @@ private struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            section("input") {
-                Picker("", selection: $voice) {
-                    Text("voice and typing").tag(true)
-                    Text("typing only").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .onChange(of: voice) { _, value in Settings.set("voice", value) }
+            // Voice is paused. Its controls only show for someone who turned it
+            // back on in settings.json.
+            if voiceAtLaunch {
+                section("input") {
+                    Picker("", selection: $voice) {
+                        Text("voice and typing").tag(true)
+                        Text("typing only").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .onChange(of: voice) { _, value in Settings.set("voice", value) }
 
-                note(voice
-                     ? "Hold the talk key to speak; type from the notch any time. Voice needs Apple Silicon and the voice extras."
-                     : "No mic, no speech models. Type from the notch (⌃⌥T) to message or steer any session.")
-                if voice != voiceAtLaunch {
-                    note("Restart ./run.sh for this to take effect.", tint: AgentPhase.waiting.tint)
-                }
-            }
-
-            section("talk key") {
-                Picker("", selection: $talkKey) {
-                    ForEach(PushToTalk.Key.all, id: \.self) { key in
-                        Text(key.label).tag(key)
+                    note(voice
+                         ? "Hold the talk key to speak; type from the notch any time. Voice needs Apple Silicon and the voice extras."
+                         : "No mic, no speech models. Type from the notch (⌃⌥T) to message or steer any session.")
+                    if voice != voiceAtLaunch {
+                        note("Restart ./run.sh for this to take effect.", tint: AgentPhase.waiting.tint)
                     }
                 }
-                .labelsHidden()
-                .frame(width: 160)
-                .disabled(!voice)
-                .onChange(of: talkKey) { _, key in Settings.set("talk_key", key.rawValue) }
-                if ProcessInfo.processInfo.environment["PTT_KEY"] != nil {
-                    note("PTT_KEY is set in the environment and overrides this.", tint: AgentPhase.waiting.tint)
+
+                section("talk key") {
+                    Picker("", selection: $talkKey) {
+                        ForEach(PushToTalk.Key.all, id: \.self) { key in
+                            Text(key.label).tag(key)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                    .disabled(!voice)
+                    .onChange(of: talkKey) { _, key in Settings.set("talk_key", key.rawValue) }
+                    if ProcessInfo.processInfo.environment["PTT_KEY"] != nil {
+                        note("PTT_KEY is set in the environment and overrides this.", tint: AgentPhase.waiting.tint)
+                    }
+                }
+
+            } else {
+                section("input") {
+                    note("Typing only. Voice is paused; \"voice\": true in settings.json brings it back, unmaintained.")
                 }
             }
 

@@ -1,20 +1,19 @@
 # voice-agent
 
-Voice-native Claude Code, living in the MacBook notch. Hold a key, talk through
-code out loud, and Claude Code does the actual work underneath. The same notch
-watches every other Claude Code session on the machine, so an agent stuck on a
-permission prompt in a terminal you aren't looking at shows up where you are.
+A companion for Claude Code that lives in the MacBook notch. It watches every
+Claude Code session on your Mac, the desktop app's included, and brings what
+needs you to where you are: permission questions you can answer, or ask about,
+without switching apps; each session's conversation; a line when a long turn
+finishes; and replies you can type straight from the notch.
 
-Speech runs on the machine both ways. No API key, nothing billed beyond your own
-Claude plan.
+> **Voice is paused.** This started as a voice agent, and the speech code is still
+> here: on-device speech-to-text and text-to-speech, push-to-talk. It's off by
+> default and not maintained for now. The sections on talking to it and on speech
+> describe it as it was; `"voice": true` in `settings.json` turns it back on.
 
 <p align="center">
-  <img src="docs/focus.png" width="440" alt="The notch panel on the focus tab: a permission question with allow and deny, two more waiting underneath, then the spoken turn and Claude's answer">
-  &nbsp;
-  <img src="docs/agents.png" width="440" alt="The notch panel on the agents tab: every Claude Code session on the machine with its project, branch, state and tokens">
+  <img src="docs/question.png" width="480" alt="A permission question dropped down from the notch: the command, the agent's reason, a plain-language explanation, and allow, always, deny and open-in-app buttons">
 </p>
-
-<p align="center"><sub><b>focus</b> — the agent you're talking to &nbsp;·&nbsp; <b>agents</b> — every session on the machine</sub></p>
 
 - [What it does](#what-it-does)
 - [How it fits together](#how-it-fits-together)

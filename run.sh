@@ -33,9 +33,10 @@ command -v claude >/dev/null || die "claude isn't on PATH"
 mkdir -p "$LOGS"
 
 [ -f settings.json ] || cp settings.example.json settings.json
-# "voice": false in settings.json runs without the voice backend: no mic, no
+# Voice is paused: it only starts with "voice": true in settings.json. Without it
+# there's no voice backend: no mic, no
 # speech models, and nothing that needs Apple Silicon. The notch is typed to.
-VOICE=$("$PY" -c 'import json; print(json.load(open("settings.json")).get("voice", True) is not False)' 2>/dev/null || echo True)
+VOICE=$("$PY" -c 'import json; print(json.load(open("settings.json")).get("voice", False) is True)' 2>/dev/null || echo False)
 if [ "$VOICE" = True ]; then
   listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
   "$PY" -c 'import pipecat' 2>/dev/null \
