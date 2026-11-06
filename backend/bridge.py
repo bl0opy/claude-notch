@@ -5,6 +5,8 @@ from typing import Any, Awaitable, Callable
 import websockets
 from loguru import logger
 
+from backend import auth
+
 Handler = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -43,7 +45,11 @@ class NotchBridge:
 
     async def start(self):
         self._server = await websockets.serve(
-            self._client_loop, self.host, self.port, origins=self.origins
+            self._client_loop,
+            self.host,
+            self.port,
+            origins=self.origins,
+            process_request=auth.refuse_without_token,
         )
         logger.info(f"notch bridge listening on ws://{self.host}:{self.port}")
 

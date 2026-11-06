@@ -14,6 +14,7 @@ Hooks also send fire-and-forget `event` lines (turn stopped), which become
 `fleet_event` broadcasts the voice backend turns into speech.
 """
 import asyncio
+import hmac
 import json
 import os
 import time
@@ -22,12 +23,16 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from agentsd import risk
+from agentsd import chat, explain, risk
 from agentsd.registry import from_registry
 from agentsd.snapshot import project_name
+from agentsd.turns import DONE_AFTER_S
 
-# A turn this long is worth "done" out loud; anything shorter you were watching.
-DONE_AFTER_S = 30
+
+
+# Claude's own multiple-choice question. It isn't asking to be allowed: allowing it
+# without a choice leaves it waiting, so it only takes answers, or a no.
+QUESTION_TOOL = "AskUserQuestion"
 
 
 @dataclass
@@ -41,6 +46,11 @@ class Pending:
     input: dict
     suggestions: list
     created: float = field(default_factory=time.time)
+    # What the agent said before asking, from its transcript.
+    why: str = ""
+    # Asked for from the card. The question stays open meanwhile.
+    explanation: str = ""
+    explaining: bool = False
     future: asyncio.Future | None = None
     # Seen the session's dialog up. Only then does it closing mean anything.
     armed: bool = False
@@ -58,8 +68,29 @@ class Pending:
             "summary": risk.summary(self.tool, self.input),
             "risky": risk.destructive(self.tool, self.input),
             "canAlways": bool(self.suggestions),
+            "always": always_label(self.suggestions),
+            "why": self.why,
+            "explanation": self.explanation,
+            "explaining": self.explaining,
+            "questions": (self.input.get("questions") or []) if self.tool == QUESTION_TOOL else [],
             "created": int(self.created * 1000),
         }
+
+
+def always_label(suggestions: list) -> str:
+    """What "always" would add, as Claude Code writes rules: `Bash(npm test:*)`."""
+    rules = []
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            continue
+        if suggestion.get("type") == "addDirectories":
+            rules += [f"access to {d}" for d in suggestion.get("directories") or []]
+            continue
+        for rule in suggestion.get("rules") or []:
+            tool, content = rule.get("toolName") or "", rule.get("ruleContent") or ""
+            if tool:
+                rules.append(f"{tool}({content})" if content else tool)
+    return ", ".join(rules)
 
 
 def _alive(pid: int) -> bool:
@@ -75,7 +106,8 @@ def _alive(pid: int) -> bool:
 
 
 class Inbox:
-    def __init__(self, host: str, port: int, broadcast, owned_timeout_s: float, terminal_timeout_s: float):
+    def __init__(self, host: str, port: int, broadcast, owned_timeout_s: float, terminal_timeout_s: float,
+                 helper_pids: set[int] | None = None, token: str = "", cards=None):
         self.host = host
         self.port = port
         self._broadcast = broadcast
@@ -83,6 +115,13 @@ class Inbox:
         self._terminal_timeout = terminal_timeout_s
         self._pending: dict[str, Pending] = {}
         self._server: asyncio.Server | None = None
+        # Set, a hook has to show it: a card is something you'll click on, so
+        # not just anything on this machine gets to put one up.
+        self._token = token
+        # Where lines from hooks/notch_mcp.py go.
+        self._cards = cards
+        # Helper Claude processes, which don't belong on the roster.
+        self._helper_pids = helper_pids if helper_pids is not None else set()
         self._busy_since: dict[int, float] = {}
         # How long each agent's last stretch of work ran, for the Stop event
         # that may land just before or just after the tick that saw it end.
@@ -110,18 +149,42 @@ class Inbox:
     async def _changed(self):
         await self._broadcast(self.snapshot())
 
-    def answer(self, req_id: str, approved: bool, always: bool = False, how: str = "") -> bool:
+    def answer(self, req_id: str, approved: bool, always: bool = False, how: str = "",
+               answers: dict | None = None) -> bool:
         pending = self._pending.get(req_id)
         if not pending:
             return False
+        if approved and pending.tool == QUESTION_TOOL and not answers:
+            logger.info("a yes to a question with no choice in it was ignored")
+            return False
         decision = "allow" if approved else "deny"
-        self._settle(pending, decision, how, always=always and approved)
+        self._settle(pending, decision, how, always=always and approved,
+                     updated_input={**pending.input, "answers": answers} if answers and approved else None)
         logger.info(f"{decision}{' always' if always else ''} {pending.tool} for {project_name(pending.cwd)} {how}")
         return True
 
-    def _settle(self, pending: Pending, decision: str, reason: str, always: bool = False):
+    async def explain(self, req_id: str):
+        """Say what a question means, without answering it."""
+        pending = self._pending.get(req_id)
+        if not pending or pending.explaining or pending.explanation:
+            return
+        pending.explaining = True
+        await self._changed()
+        rows = await asyncio.to_thread(chat.chat, pending.cwd, pending.session_id)
+        pending.explanation = await explain.explain(
+            pending.tool, risk.detail(pending.tool, pending.input), rows, self._helper_pids
+        )
+        pending.explaining = False
+        if req_id in self._pending:
+            await self._changed()
+
+    def _settle(self, pending: Pending, decision: str, reason: str, always: bool = False,
+                updated_input: dict | None = None):
         if pending.future and not pending.future.done():
-            pending.future.set_result({"decision": decision, "reason": reason, "always": always})
+            result = {"decision": decision, "reason": reason, "always": always}
+            if updated_input:
+                result["updatedInput"] = updated_input
+            pending.future.set_result(result)
 
     # ---- keeping cards honest -------------------------------------------
 
@@ -158,6 +221,15 @@ class Inbox:
             writer.close()
             return
 
+        if self._token and not hmac.compare_digest(str(msg.get("token") or "").encode(), self._token.encode()):
+            logger.warning("a hook line without the token was dropped — scripts/install-hooks.sh updates the hook")
+            writer.close()
+            return
+
+        if msg.get("kind") in ("ask", "show") and self._cards:
+            await self._cards.handle(msg, reader, writer)
+            return
+
         if msg.get("kind") == "event":
             writer.close()
             await self._event(msg)
@@ -174,6 +246,8 @@ class Inbox:
             suggestions=msg.get("suggestions") or [],
             future=asyncio.get_running_loop().create_future(),
         )
+        if pending.session_id and pending.cwd:
+            pending.why = await asyncio.to_thread(chat.why, pending.cwd, pending.session_id)
         timeout = self._owned_timeout if pending.source == "owned" else self._terminal_timeout
         self._pending[pending.id] = pending
         await self._changed()

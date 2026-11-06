@@ -31,8 +31,6 @@ struct RemoteAgent: Identifiable, Equatable {
     let waitingFor: String
     let activity: String
     let activityDetail: String
-    let tokensOut: Int
-    let subagents: Int
     /// Started by the notch: it can be interrupted, and its permission questions
     /// can be answered here. A session started in a terminal can't be.
     let owned: Bool
@@ -42,6 +40,13 @@ struct RemoteAgent: Identifiable, Equatable {
     /// Where it runs: "ttys003" in "Terminal". Blank when the daemon couldn't tell.
     let tty: String
     let host: String
+    /// A Code tab in the Claude app: its title there, and the app's own line
+    /// about what the last turn did and what it needs from you.
+    let appTitle: String
+    let summary: String
+    let needs: String
+    /// Opens it in the app.
+    let link: String
 
     init?(_ raw: [String: Any]) {
         guard let id = raw["id"] as? String, !id.isEmpty else { return nil }
@@ -58,13 +63,19 @@ struct RemoteAgent: Identifiable, Equatable {
         pid = raw["pid"] as? Int ?? 0
         tty = raw["tty"] as? String ?? ""
         host = raw["host"] as? String ?? ""
-        subagents = (raw["subagents"] as? [String: Any])?["total"] as? Int ?? 0
-        tokensOut = (raw["tokens"] as? [String: Any])?["out"] as? Int ?? 0
+        appTitle = raw["title"] as? String ?? ""
+        summary = raw["summary"] as? String ?? ""
+        needs = raw["needs"] as? String ?? ""
+        link = raw["link"] as? String ?? ""
     }
 
     /// Runs in the agents daemon's pty; its terminal is the notch's own window.
     var hosted: Bool { host == "window" }
-    var canJump: Bool { hosted || Jump.canJump(host: host) }
+    var desktop: Bool { host == "desktop" }
+    var canJump: Bool { hosted || (desktop && !link.isEmpty) || Jump.canJump(host: host) }
+
+    /// What to call it in a list: the app's title for it, or where it is.
+    var label: String { appTitle.isEmpty ? title : appTitle }
 
     /// Where it is: `voice-agent/main`.
     var title: String { branch.isEmpty ? project : "\(project)/\(branch)" }
@@ -72,63 +83,31 @@ struct RemoteAgent: Identifiable, Equatable {
     /// What it's doing, in the same words the activity feed uses.
     var subtitle: String {
         switch state {
-        case .waiting: return waitingFor.isEmpty ? "waiting on you" : "waiting: \(waitingFor)"
+        case .waiting:
+            if !needs.isEmpty { return needs }
+            return waitingFor.isEmpty ? "waiting on you" : "waiting: \(waitingFor)"
         case .working:
             if activity.isEmpty { return "working" }
             return activityDetail.isEmpty ? activity : "\(activity)(\(activityDetail))"
-        case .idle: return "idle"
+        case .idle: return summary.isEmpty ? "idle" : summary
         case .unknown: return "—"
         }
     }
 }
 
-/// Every session on the machine as one line.
-struct FleetTotals: Equatable {
-    let sessions: Int
-    let tokens: Int
-    /// What those tokens would cost at API rates. A subscription isn't billed
-    /// per token, so this is a size to compare sessions by, not a bill.
-    let cost: Double
-    /// Windows don't add up — five sessions don't share one — so the fullest is
-    /// what's reported, plus how many are close enough to compact soon.
-    let fullestPct: Double
-    let fullest: String
-    let crowded: Int
+/// One line of a session's conversation, as the agents daemon reads it back.
+struct ChatRow: Identifiable, Equatable {
+    enum Role: String { case you, claude, tool, notch }
 
-    init?(_ raw: [String: Any]?) {
-        guard let raw, let sessions = raw["sessions"] as? Int, sessions > 0 else { return nil }
-        self.sessions = sessions
-        tokens = raw["totalTokens"] as? Int ?? 0
-        cost = raw["cost"] as? Double ?? 0
-        let context = raw["context"] as? [String: Any] ?? [:]
-        fullestPct = context["fullestPct"] as? Double ?? 0
-        fullest = context["fullest"] as? String ?? ""
-        crowded = context["crowded"] as? Int ?? 0
-    }
+    let id: Int
+    let role: Role
+    let text: String
 
-    var tokenLabel: String { compactTokens(tokens) }
-
-    var costLabel: String {
-        cost >= 10 ? String(format: "$%.0f", cost) : String(format: "$%.2f", cost)
-    }
-
-    /// Amber once something is close to compacting.
-    var pressureTint: Color {
-        if crowded > 0 || fullestPct >= 75 { return AgentPhase.waiting.tint }
-        return Color(white: 0.45)
-    }
-
-    var contextLabel: String {
-        if fullest.isEmpty { return "—" }
-        return String(format: "%@ %.0f%%", fullest, fullestPct)
-    }
-}
-
-/// 812 · 4.2k · 1.4M — narrow and stable so the column doesn't jitter.
-func compactTokens(_ value: Int) -> String {
-    switch value {
-    case ..<1_000: return "\(value)"
-    case ..<1_000_000: return String(format: "%.1fk", Double(value) / 1_000)
-    default: return String(format: "%.1fM", Double(value) / 1_000_000)
+    init?(_ raw: [String: Any], index: Int) {
+        guard let role = Role(rawValue: raw["role"] as? String ?? ""),
+              let text = raw["text"] as? String, !text.isEmpty else { return nil }
+        id = index
+        self.role = role
+        self.text = text
     }
 }

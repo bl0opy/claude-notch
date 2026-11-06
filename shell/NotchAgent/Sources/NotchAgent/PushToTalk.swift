@@ -7,7 +7,7 @@ import AppKit
 /// key nothing binds on its own. Needs Accessibility permission, same as the
 /// ⌥Space interrupt.
 ///
-/// Set `PTT_KEY` to pick the key: `rightOption` (default), `rightCommand`,
+/// Pick the key in Settings, or with `PTT_KEY`: `rightOption` (default), `rightCommand`,
 /// `fn`, `leftOption` or `command`. Plain `command` is the old behaviour — it's
 /// half of every shortcut on the machine, so there it has to be held alone past
 /// `holdDelay` and anything else pressed cancels the hold.
@@ -16,8 +16,12 @@ final class PushToTalk {
     enum Key: String {
         case rightOption, rightCommand, fn, leftOption, command
 
+        static let all: [Key] = [.rightOption, .rightCommand, .fn, .leftOption, .command]
+
         static var configured: Key {
+            let fromSettings = Settings.talkKey
             let raw = ProcessInfo.processInfo.environment["PTT_KEY"]
+                ?? (fromSettings.isEmpty ? nil : fromSettings)
                 ?? UserDefaults.standard.string(forKey: "PTTKey")
                 ?? ""
             return Key(rawValue: raw) ?? .rightOption
@@ -59,12 +63,13 @@ final class PushToTalk {
         }
     }
 
-    /// Cached so the UI can name the key without re-reading the environment.
-    static let key = Key.configured
+    /// Cached so the UI can name the key without re-reading settings.json;
+    /// `reload()` picks up a change.
+    private(set) static var key = Key.configured
 
     var onChange: ((Bool) -> Void)?
 
-    let key = PushToTalk.key
+    var key: Key { PushToTalk.key }
 
     private let holdDelay: TimeInterval = 0.2
     private var monitors: [Any] = []
@@ -81,6 +86,13 @@ final class PushToTalk {
                 self?.cancelHold()
             }
         }
+    }
+
+    /// Re-reads the key and watches it instead of the old one.
+    func reload() {
+        uninstall()
+        PushToTalk.key = Key.configured
+        install()
     }
 
     func uninstall() {

@@ -8,15 +8,20 @@ Also checks that a browser page from anywhere else is turned away.
 """
 import asyncio
 import json
+import os
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
+from urllib.parse import quote
 
 import websockets
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+os.environ["NOTCH_TOKEN_FILE"] = str(Path(tempfile.mkdtemp()) / "token")
 
 from agentsd.pty_host import PtyHost
+from backend import auth
 from agentsd.window import WindowServer
 
 PORT = 18768
@@ -71,7 +76,14 @@ async def main() -> int:
     url = f"ws://127.0.0.1:{PORT}/pty/{hosted.id}"
     await asyncio.sleep(0.5)
 
-    async with websockets.connect(url) as ws:
+    signed = {"additional_headers": auth.headers()}
+    try:
+        async with websockets.connect(url):
+            check("no token, no keyboard", False, "handshake accepted")
+    except websockets.InvalidStatus as e:
+        check("no token, no keyboard", e.response.status_code == 401, str(e))
+
+    async with websockets.connect(url, **signed) as ws:
         seen = await read_until(ws, "size 90x20")
         check("replay has the first screen", "ready --session-id" in seen and "size 90x20" in seen, seen)
         check("child has a controlling tty", "tty=True" in seen, seen)
@@ -85,7 +97,7 @@ async def main() -> int:
         await host.type(hosted.id, "spoken   words\nhere")
         check("type() submits one line", "got:spoken words here" in await read_until(ws, "got:spoken"))
 
-    async with websockets.connect(url) as late:
+    async with websockets.connect(url, **signed) as late:
         seen = await read_until(late, "got:spoken")
         check("a late window gets the scrollback", "got:hello" in seen, seen)
 
@@ -94,17 +106,24 @@ async def main() -> int:
     check("session is listed as stopped", not host.snapshot()["list"][0]["running"])
 
     try:
-        async with websockets.connect(url, origin="http://evil.example"):
+        async with websockets.connect(url, origin="http://evil.example", **signed):
             check("foreign origin refused", False, "handshake accepted")
     except websockets.InvalidStatus as e:
         check("foreign origin refused", e.response.status_code == 403, str(e))
 
-    async with websockets.connect(url, origin=f"http://127.0.0.1:{PORT}") as ws:
-        check("the page's own origin is let in", "got:hello" in await read_until(ws, "got:hello"))
+    try:
+        async with websockets.connect(url, origin=f"http://127.0.0.1:{PORT}"):
+            check("the right origin isn't enough", False, "handshake accepted")
+    except websockets.InvalidStatus as e:
+        check("the right origin isn't enough", e.response.status_code == 401, str(e))
+
+    async with websockets.connect(f"{url}?token={quote(auth.token())}", origin=f"http://127.0.0.1:{PORT}") as ws:
+        check("the page's own origin with the token is let in", "got:hello" in await read_until(ws, "got:hello"))
 
     # The server shares this loop, so blocking HTTP has to go to a thread.
     config = await asyncio.to_thread(get, "/config.json")
     check("config.json names the roster", json.loads(config[1])["roster"] == "ws://127.0.0.1:8767")
+    check("config.json doesn't give the token away", auth.token().encode() not in config[1])
     check("no escaping the page dir", (await asyncio.to_thread(get, "/../agentsd/config.py"))[0] == 404)
 
     await server.stop()

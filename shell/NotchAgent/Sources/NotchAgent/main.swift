@@ -1,35 +1,37 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NotchWindow?
-    private var statusItem: NSStatusItem?
     private let state = AgentState()
     private var client: BridgeClient!
     private var agentsClient: BridgeClient!
     private var hotKeyMonitor: Any?
     private var mouse: MouseTracker?
     private let pushToTalk = PushToTalk()
+    private var watchers: Set<AnyCancellable> = []
+    private var appObservers: [NSObjectProtocol] = []
+    private var placed: (frame: NSRect, notch: CGSize)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        TerminalWindow.installMenu()
+        if state.hostedAgents { TerminalWindow.installMenu() }
 
-        let geometry = NotchGeometry.current()
-        let frame = geometry.windowFrame(expandedWidth: 520, expandedHeight: 480)
         // Made before the window: the view reports the island's frame during
         // the window's first layout, and that report must land somewhere.
         let tracker = MouseTracker(state: state)
-        let window = NotchWindow(
-            contentRect: frame,
-            rootView: NotchView(state: state, geometry: geometry) { tracker.island = $0 }
-        )
-        window.setFrame(frame, display: true)
-        window.orderFrontRegardless()
-        self.window = window
-        tracker.install(on: window)
         mouse = tracker
+        let window = NotchWindow(contentRect: .zero, rootView: EmptyView())
+        self.window = window
+        placeOnNotch()
+        tracker.install(on: window)
+        // Displays plugged in, unplugged or rearranged all move the coordinates
+        // the window was placed by.
+        NotificationCenter.default.publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .sink { [weak self] _ in self?.placeOnNotch() }
+            .store(in: &watchers)
 
         client = BridgeClient()
         client.onMessage = { [weak self] message in self?.state.apply(message) }
@@ -43,7 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.state.phase = .disconnected
             }
         }
-        client.connect()
+        // Typing only, there's no voice backend to reach.
+        if state.voice { client.connect() }
 
         // The agents daemon is a separate process on its own port, so the roster
         // outlives the voice pipeline. Its socket dropping says nothing about the
@@ -61,11 +64,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         agentsClient.connect()
 
         state.startClock()
-        installStatusItem()
+        followClaudeApp()
         installHotKey()
 
-        pushToTalk.onChange = { [weak self] down in self?.state.setTalking(down) }
-        pushToTalk.install()
+        if state.voice {
+            pushToTalk.onChange = { [weak self] down in self?.state.setTalking(down) }
+            pushToTalk.install()
+            NotificationCenter.default.publisher(for: Settings.changed)
+                .sink { [weak self] _ in
+                    guard let self, PushToTalk.Key.configured != PushToTalk.key else { return }
+                    self.pushToTalk.reload()
+                }
+                .store(in: &watchers)
+        }
+
+        // Clicking into another app ends typing, or the panel would stay open.
+        NotificationCenter.default.publisher(for: NSWindow.didResignKeyNotification, object: window)
+            .sink { [weak self] _ in self?.state.endCompose() }
+            .store(in: &watchers)
+
+        // The notch takes the keyboard only while you're typing in it; done,
+        // it goes back to whatever app you were in.
+        // Debounced: moving from one field in the notch to the other is a
+        // blur then a focus, and isn't done typing.
+        state.$composing
+            .debounce(for: .milliseconds(120), scheduler: RunLoop.main)
+            .removeDuplicates()
+            .sink { [weak self] composing in
+                guard !composing, let window = self?.window, window.isKeyWindow,
+                      let app = NSWorkspace.shared.frontmostApplication, app != .current else { return }
+                app.activate()
+            }
+            .store(in: &watchers)
     }
 
     /// When run.sh started the agents daemon, quitting the notch takes the
@@ -87,45 +117,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
     }
 
+    private func placeOnNotch() {
+        guard let window, let mouse, let geometry = NotchGeometry.current() else { return }
+        let frame = geometry.windowFrame(expandedWidth: 720, expandedHeight: 600)
+        let notch = CGSize(width: geometry.notchWidth, height: geometry.notchHeight)
+        if let placed, placed.frame == frame, placed.notch == notch { return }
+        placed = (frame, notch)
+        window.contentView = NSHostingView(
+            rootView: NotchView(state: state, geometry: geometry) { mouse.island = $0 }
+        )
+        window.setFrame(frame, display: true)
+    }
+
+    /// Up while the Claude app is open, and put away when it quits.
+    private func followClaudeApp() {
+        applyVisibility()
+        appObservers = ClaudeApp.observe { [weak self] in self?.applyVisibility() }
+        state.claudeInFront = ClaudeApp.frontmost
+        appObservers.append(ClaudeApp.observeFrontmost { [weak self] front in self?.state.claudeInFront = front })
+        NotificationCenter.default.publisher(for: Settings.changed)
+            .sink { [weak self] _ in self?.applyVisibility() }
+            .store(in: &watchers)
+    }
+
+    private func applyVisibility() {
+        let show = ClaudeApp.shouldShowNow
+        guard show == state.hidden || window?.isVisible != show else { return }
+        state.setHidden(!show)
+        if show {
+            window?.orderFrontRegardless()
+        } else {
+            window?.orderOut(nil)
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         client?.disconnect()
         agentsClient?.disconnect()
         if let monitor = hotKeyMonitor { NSEvent.removeMonitor(monitor) }
+        appObservers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         pushToTalk.uninstall()
         mouse?.uninstall()
-    }
-
-    private func installStatusItem() {
-        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "◎"
-        let menu = NSMenu()
-        menu.addItem(withTitle: pushToTalk.menuTitle, action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(
-            withTitle: "Interrupt (⌥Space)", action: #selector(interrupt), keyEquivalent: ""
-        ).target = self
-        menu.addItem(withTitle: "Allow / deny oldest (⌃⌥Y / ⌃⌥N)", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(withTitle: "Show its terminal (⌃⌥J)", action: nil, keyEquivalent: "").isEnabled = false
-        menu.addItem(.separator())
-        menu.addItem(
-            withTitle: "Agents dashboard", action: #selector(showAgents), keyEquivalent: ""
-        ).target = self
-        menu.addItem(
-            withTitle: "Terminal window", action: #selector(showTerminals), keyEquivalent: ""
-        ).target = self
-        menu.addItem(
-            withTitle: "New agent…", action: #selector(newAgent), keyEquivalent: ""
-        ).target = self
-        menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        item.menu = menu
-        statusItem = item
     }
 
     /// Keys that work from any app. Needs Accessibility permission.
     ///
     /// - ⌥Space: shut it up.
     /// - ⌃⌥Y / ⌃⌥N: allow or deny the oldest open question.
-    /// - ⌃⌥J: show the terminal it came from.
+    /// - ⌃⌥J: show the session it came from: its tab in the app, or its terminal.
+    /// - ⌃⌥T: type to the focused agent.
     ///
     /// Global monitors can't swallow a key, so the approval keys use ⌃⌥ — nothing
     /// a terminal or an editor does anything with.
@@ -138,8 +178,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleHotKey(flags: NSEvent.ModifierFlags, code: UInt16) {
+        guard !state.hidden else { return }
         if flags.contains(.option), !flags.contains(.control), code == 49 {
             state.interrupt()
+            return
+        }
+        if flags.contains([.control, .option]), code == 17 {    // T
+            compose()
             return
         }
         guard flags.contains([.control, .option]), let top = state.topApproval else { return }
@@ -151,21 +196,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func compose() {
+        window?.makeKey()
+        state.requestCompose()
+    }
+
     @objc private func interrupt() {
         state.interrupt()
-    }
-
-    @objc private func showAgents() {
-        state.show(.agents)
-    }
-
-    @objc private func showTerminals() {
-        TerminalWindow.shared.show()
-    }
-
-    @objc private func newAgent() {
-        guard let path = PathPrompt.ask() else { return }
-        state.startAgent(in: path)
     }
 }
 

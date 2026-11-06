@@ -1,9 +1,15 @@
 import Foundation
 
+/// Somewhere the notch sends messages: a socket, or a recorder in the tests.
+@MainActor
+protocol MessageSink: AnyObject {
+    func send(_ payload: [String: Any])
+}
+
 /// Talks to the Python backend over ws://127.0.0.1:8765, reconnecting on its own
 /// so a backend restart never takes the notch down with it.
 @MainActor
-final class BridgeClient {
+final class BridgeClient: MessageSink {
     private let url: URL
     private var task: URLSessionWebSocketTask?
     private var session: URLSession!
@@ -20,17 +26,19 @@ final class BridgeClient {
 
     func connect() {
         stopped = false
-        let task = session.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(BridgeToken.read)", forHTTPHeaderField: "Authorization")
+        let task = session.webSocketTask(with: request)
         self.task = task
         task.resume()
-        receive()
+        receive(on: task)
         // The socket reports failure only on the first receive, so probe it.
         task.sendPing { [weak self] error in
             Task { @MainActor in
                 guard let self else { return }
                 if let error {
-                    self.handleDrop(error)
-                } else {
+                    self.handleDrop(error, from: task)
+                } else if task === self.task {
                     self.reconnectDelay = 0.5
                     self.onConnectionChange?(true)
                 }
@@ -50,27 +58,29 @@ final class BridgeClient {
         task?.send(.string(text)) { _ in }
     }
 
-    private func receive() {
-        task?.receive { [weak self] result in
+    private func receive(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
                 switch result {
                 case .failure(let error):
-                    self.handleDrop(error)
+                    self.handleDrop(error, from: task)
                 case .success(let message):
                     if case .string(let text) = message,
                        let data = text.data(using: .utf8),
                        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                         self.onMessage?(obj)
                     }
-                    self.receive()
+                    self.receive(on: task)
                 }
             }
         }
     }
 
-    private func handleDrop(_ error: Error) {
-        guard !stopped else { return }
+    /// A failed connection reports it twice, from the ping and the receive.
+    /// Only the first counts, or every failure would start two more attempts.
+    private func handleDrop(_ error: Error, from dropped: URLSessionWebSocketTask) {
+        guard !stopped, dropped === task else { return }
         onConnectionChange?(false)
         task?.cancel()
         task = nil

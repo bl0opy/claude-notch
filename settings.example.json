@@ -1,4 +1,6 @@
 {
+  "voice": false,
+  "follow_claude_app": true,
   "default_agent_path": "~",
   "notch_fold_after": 300
 }

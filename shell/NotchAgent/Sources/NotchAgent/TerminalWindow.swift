@@ -24,7 +24,13 @@ final class TerminalWindow: NSObject, NSWindowDelegate {
             present(window)
             return
         }
-        let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: "window.notchToken = \(Self.jsString(BridgeToken.read));",
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        let webView = WKWebView(frame: .zero, configuration: configuration)
         var url = Self.base
         if let id, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             parts.fragment = id
@@ -68,7 +74,7 @@ final class TerminalWindow: NSObject, NSWindowDelegate {
         webView?.removeFromSuperview()
         webView = nil
         window = nil
-        NSApp.setActivationPolicy(.accessory)
+        DockIcon.release(closing: notification.object as? NSWindow)
     }
 
     private static func jsString(_ value: String) -> String {

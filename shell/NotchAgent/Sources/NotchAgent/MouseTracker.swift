@@ -3,7 +3,7 @@ import AppKit
 /// Decides, from the cursor alone, whether the notch is being hovered and
 /// whether its window should take clicks at all.
 ///
-/// The window is a fixed 520×480 panel at the top of the screen, big enough for
+/// The window is a fixed 720×600 panel at the top of the screen, big enough for
 /// the open panel, and most of it is empty. Left to itself it sits over whatever
 /// is under it, so a click or drag up there could land in the notch instead:
 /// dragging a window across the top of the screen opened the panel under the
@@ -72,11 +72,15 @@ final class MouseTracker {
 
     private func update() {
         guard let window else { return }
+        guard window.isVisible else {
+            window.ignoresMouseEvents = true
+            return
+        }
         let cursor = NSEvent.mouseLocation
         // The screen's top edge counts as inside: the cursor pinned against it
         // above the notch is aiming for the notch. Folded, the island is only
         // the hardware notch, so give it some slack either side.
-        let slack: CGFloat = state.dormant ? -24 : 0
+        let slack: CGFloat = state.islandMode == .dormant ? -24 : 0
         let target = islandOnScreen(in: window).insetBy(dx: slack, dy: -2)
         let inside = !island.isEmpty && target.contains(cursor)
         window.ignoresMouseEvents = !inside

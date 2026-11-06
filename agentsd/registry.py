@@ -38,6 +38,10 @@ class LiveSession:
     version: str = ""
     started_at: int = 0
     updated_at: int = 0
+    # "claude-desktop" for a Code tab in the Claude app; its id there is
+    # host_session_id ("local_…"), which is what the app's links take.
+    entrypoint: str = ""
+    host_session_id: str = ""
 
     @property
     def reachable(self) -> bool:
@@ -126,6 +130,8 @@ def live_sessions() -> tuple[list[LiveSession], str]:
                 version=extra.get("version") or "",
                 started_at=int(extra.get("startedAt") or row.get("startedAt") or 0),
                 updated_at=int(extra.get("updatedAt") or 0),
+                entrypoint=extra.get("entrypoint") or row.get("entrypoint") or "",
+                host_session_id=extra.get("hostSessionId") or "",
             )
         )
     return sessions, degraded

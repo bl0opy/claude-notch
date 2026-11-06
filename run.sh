@@ -16,6 +16,9 @@ die() { echo "run.sh: $*" >&2; exit 1; }
 listening() { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 listener_pid() { lsof -nP -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1; }
 launchd_owns_daemon() { launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; }
+NOTCH_LABEL=com.notchagent.notch
+NOTCH_PLIST="$HOME/Library/LaunchAgents/$NOTCH_LABEL.plist"
+NOTCH_STEPPED_ASIDE=
 
 wait_for_port() {
   for _ in $(seq 1 50); do
@@ -27,8 +30,18 @@ wait_for_port() {
 
 [ -x "$PY" ] || die "no .venv — pyenv local 3.11.6 && python -m venv .venv (see README)"
 command -v claude >/dev/null || die "claude isn't on PATH"
-listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
 mkdir -p "$LOGS"
+
+[ -f settings.json ] || cp settings.example.json settings.json
+# Voice is paused: it only starts with "voice": true in settings.json. Without it
+# there's no voice backend: no mic, no
+# speech models, and nothing that needs Apple Silicon. The notch is typed to.
+VOICE=$("$PY" -c 'import json; print(json.load(open("settings.json")).get("voice", False) is True)' 2>/dev/null || echo False)
+if [ "$VOICE" = True ]; then
+  listening 8765 && die "port 8765 is taken — a backend is already running (lsof -iTCP:8765)"
+  "$PY" -c 'import pipecat' 2>/dev/null \
+    || die "voice is on but its packages aren't installed — .venv/bin/pip install -r requirements-voice.txt, or set \"voice\": false in settings.json"
+fi
 
 # SwiftPM bakes absolute paths into its module cache, so a moved repo fails to
 # build until the cache is gone.
@@ -51,6 +64,9 @@ cleanup() {
     [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
+  if [ -n "$NOTCH_STEPPED_ASIDE" ]; then
+    launchctl bootstrap "gui/$(id -u)" "$NOTCH_PLIST" 2>/dev/null || true
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -85,17 +101,25 @@ else
   wait_for_port "$WINDOW_PORT" || die "the agents daemon didn't start — see $LOGS/agentsd.log"
 fi
 
-"$PY" -m backend.main > >(tee -a "$LOGS/backend.log") 2>&1 &
-BACKEND=$!
-PIDS+=($BACKEND)
+BACKEND=
+if [ "$VOICE" = True ]; then
+  "$PY" -m backend.main > >(tee -a "$LOGS/backend.log") 2>&1 &
+  BACKEND=$!
+  PIDS+=($BACKEND)
 
-for _ in $(seq 1 50); do
-  listening 8765 && break
-  kill -0 "$BACKEND" 2>/dev/null || die "backend exited during startup — see $LOGS/backend.log"
-  sleep 0.2
-done
+  for _ in $(seq 1 50); do
+    listening 8765 && break
+    kill -0 "$BACKEND" 2>/dev/null || die "backend exited during startup — see $LOGS/backend.log"
+    sleep 0.2
+  done
+fi
 
-[ -f settings.json ] || cp settings.example.json settings.json
+# One notch at a time: the login one steps aside, and comes back on the way out.
+if launchctl print "gui/$(id -u)/$NOTCH_LABEL" >/dev/null 2>&1; then
+  launchctl bootout "gui/$(id -u)/$NOTCH_LABEL" 2>/dev/null || true
+  NOTCH_STEPPED_ASIDE=1
+fi
+
 NOTCH_SETTINGS="$PWD/settings.json" "$SHELL_DIR/.build/release/NotchAgent" > >(tee -a "$LOGS/shell.log") 2>&1 &
 NOTCH=$!
 PIDS+=($NOTCH)
@@ -103,19 +127,20 @@ PIDS+=($NOTCH)
 cat <<EOF
 
   notch agent is up
-  terminal window   http://127.0.0.1:$WINDOW_PORT  (or ◎ → Terminal window)
-  new agent         + agent in the notch, or type a path in the window
-  talk              hold right ⌥
+  settings, quit    right-click the notch
+  $([ "$VOICE" = True ] && echo "talk              hold your talk key" || echo "voice             off — ⌃⌥T types to an agent")
+  type              ⌃⌥T from any app
   logs              $LOGS
 
 EOF
 
 # Whichever of backend or shell goes first takes the rest down with it.
 # (macOS ships bash 3.2 — no `wait -n`.)
-while kill -0 "$BACKEND" 2>/dev/null && kill -0 "$NOTCH" 2>/dev/null; do
+backend_up() { [ -z "$BACKEND" ] || kill -0 "$BACKEND" 2>/dev/null; }
+while backend_up && kill -0 "$NOTCH" 2>/dev/null; do
   sleep 1
 done
-if ! kill -0 "$BACKEND" 2>/dev/null; then
+if ! backend_up; then
   echo "run.sh: the voice backend exited — last lines of $LOGS/backend.log:" >&2
   tail -n 15 "$LOGS/backend.log" >&2 || true
 fi

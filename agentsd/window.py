@@ -7,9 +7,11 @@
 Pty frames, server -> page: {"type": "replay"|"out", "data"} | {"type": "exit", "code"}
 and page -> server: {"type": "in", "data"} | {"type": "resize", "cols", "rows"}.
 
-A pty socket is a keyboard on a live Claude Code session, so a browser may only
-open one from this page itself: any other Origin is refused at the handshake.
-Native clients send no Origin at all.
+A pty socket is a keyboard on a live Claude Code session, so opening one takes
+the token in backend/auth.py. A browser may also only open one from this page
+itself: any other Origin is refused at the handshake. The page isn't given the
+token by this server, which would hand it to anyone who asked: the notch's window
+puts it there.
 """
 import asyncio
 import json
@@ -23,6 +25,7 @@ from websockets.http11 import Response
 
 from agentsd.config import default_agent_path
 from agentsd.pty_host import PtyHost
+from backend import auth
 
 PAGE_DIR = Path(__file__).resolve().parent.parent / "window"
 
@@ -70,7 +73,7 @@ class WindowServer:
     def _http(self, connection, request):
         path = request.path.split("?", 1)[0]
         if path.startswith("/pty/"):
-            return None
+            return auth.refuse_without_token(connection, request)
         if path == "/config.json":
             body = json.dumps({"roster": self.roster_url, "defaultPath": default_agent_path()}).encode()
             return _response(200, body, "application/json")

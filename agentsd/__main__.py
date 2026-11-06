@@ -11,13 +11,19 @@ import sys
 
 from loguru import logger
 
+from agentsd import chat
+from agentsd.cards import Cards
 from agentsd.config import config, default_agent_path
 from agentsd.inbox import Inbox
+from agentsd.peer import Messenger
 from agentsd.pty_host import PtyHost
+from agentsd.registry import live_sessions
 from agentsd.snapshot import build
 from agentsd.supervisor import Supervisor
 from agentsd.transcripts import Transcripts
+from agentsd.turns import TurnEnds
 from agentsd.window import WindowServer, page_origins
+from backend import auth
 from backend.bridge import NotchBridge
 
 # Esc is a keypress the TUI has to read and act on before the next line lands,
@@ -45,12 +51,35 @@ async def serve():
     window = WindowServer(
         config.ws_host, config.window_port, pty, f"ws://{config.ws_host}:{config.ws_port}"
     )
+    turn_ends = TurnEnds()
+    last: dict | None = None
+
+    def row_of(session_id: str) -> dict | None:
+        return next((r for r in (last or {}).get("list") or [] if r["id"] == session_id), None)
+
+    async def with_reply(event: dict) -> dict:
+        """A finished turn carries the first line of what it answered."""
+        row = row_of(event.get("sessionId") or "")
+        if event.get("event") == "done" and row:
+            event["line"] = await asyncio.to_thread(chat.last_reply, row["cwd"], row["id"])
+        return event
+
+    async def announce(message: dict):
+        # The Stop hook's "done" and the roster's are one turn; say it once.
+        message = turn_ends.filter(message)
+        if message:
+            await bridge.send(await with_reply(message))
+
+    cards = Cards(bridge.send)
     inbox = Inbox(
         config.ws_host,
         config.inbox_port,
-        bridge.send,
+        announce,
         owned_timeout_s=config.owned_timeout_s,
         terminal_timeout_s=config.terminal_timeout_s,
+        helper_pids=supervisor.own_pids,
+        token=auth.token(),
+        cards=cards,
     )
 
     async def on_approve(msg):
@@ -59,13 +88,35 @@ async def serve():
             bool(msg.get("approved")),
             always=bool(msg.get("always")),
             how=str(msg.get("how") or "from the notch"),
+            answers=msg.get("answers") if isinstance(msg.get("answers"), dict) else None,
         )
 
-    last: dict | None = None
-
     def row_state(session_id: str) -> str:
-        rows = (last or {}).get("list") or []
-        return next((r["state"] for r in rows if r["id"] == session_id), "unknown")
+        row = row_of(session_id)
+        return row["state"] if row else "unknown"
+
+    explaining: set[asyncio.Task] = set()
+
+    async def on_explain(msg):
+        # Takes seconds, and the socket has other things to say meanwhile.
+        task = asyncio.create_task(inbox.explain(str(msg.get("id") or "")))
+        explaining.add(task)
+        task.add_done_callback(explaining.discard)
+
+    async def on_card_answer(msg):
+        answers = msg.get("answers")
+        cards.answer(str(msg.get("id") or ""), answers if isinstance(answers, dict) else {})
+
+    async def on_card_dismiss(msg):
+        await cards.dismiss(str(msg.get("id") or ""))
+
+    async def on_chat(msg):
+        """The conversation so far in one session, for the notch's panel."""
+        row = row_of(str(msg.get("id") or ""))
+        if not row:
+            return
+        rows = await asyncio.to_thread(chat.chat, row["cwd"], row["id"])
+        await bridge.send({"type": "chat", "id": row["id"], "rows": rows})
 
     async def fail(message: str):
         logger.warning(message)
@@ -97,24 +148,52 @@ async def serve():
     async def on_interrupt(msg):
         pty.interrupt(str(msg.get("id") or ""))
 
+    messenger = Messenger()
+    # What a peer receipt means to whoever typed the line.
+    receipt_status = {"delivered": "sent", "queued": "queued", "refused": "refused"}
+
     async def on_type(msg):
-        """A line for a hosted session — typed into its prompt, like a person would."""
+        """A line for a session, typed from the notch or said to it.
+
+        A hosted one gets it typed into its prompt, like a person would; `steer`
+        cancels the turn in flight first. One running in a terminal gets it over
+        its peer socket, held until it's idle, since nothing outside can cut in.
+        """
         session_id = str(msg.get("id") or "")
-        text = str(msg.get("text") or "")
-        if session_id not in pty.running_ids():
-            status = "gone"
-        elif row_state(session_id) == "waiting":
-            # Its screen is a permission dialog: keys would answer it.
-            status = "waiting"
-        elif msg.get("steer") and row_state(session_id) == "working":
-            pty.interrupt(session_id)
-            await asyncio.sleep(STEER_PAUSE_S)
-            await pty.type(session_id, text)
-            status = "steered"
+        text = str(msg.get("text") or "").strip()
+        detail = ""
+        if not text:
+            return
+        if session_id in pty.running_ids():
+            if row_state(session_id) == "waiting":
+                # Its screen is a permission dialog: keys would answer it.
+                status = "waiting"
+            elif msg.get("steer") and row_state(session_id) == "working":
+                pty.interrupt(session_id)
+                await asyncio.sleep(STEER_PAUSE_S)
+                await pty.type(session_id, text)
+                status = "steered"
+            else:
+                await pty.type(session_id, text)
+                status = "sent"
         else:
-            await pty.type(session_id, text)
-            status = "sent"
-        await bridge.send({"type": "typed", "id": session_id, "status": status})
+            sessions, _ = await asyncio.to_thread(live_sessions)
+            session = next((s for s in sessions if s.session_id == session_id), None)
+            if not session:
+                status = "gone"
+            else:
+                receipt = await messenger.send(session, text)
+                status, detail = receipt_status.get(receipt.status, "refused"), receipt.detail
+        await bridge.send({"type": "typed", "id": session_id, "status": status, "detail": detail})
+
+    async def deliver_held():
+        """Lines held for busy terminal sessions go out once they're idle."""
+        if not messenger.holding:
+            return
+        sessions, _ = await asyncio.to_thread(live_sessions)
+        for receipt in await messenger.pump(sessions):
+            status = receipt_status.get(receipt.status, "refused")
+            await bridge.send({"type": "typed", "id": receipt.session_id, "status": status, "detail": receipt.detail})
 
     bridge.on("approve", on_approve)
     bridge.on("spawn", on_spawn)
@@ -123,13 +202,17 @@ async def serve():
     bridge.on("forget", on_forget)
     bridge.on("interrupt", on_interrupt)
     bridge.on("type", on_type)
+    bridge.on("chat", on_chat)
+    bridge.on("explain", on_explain)
+    bridge.on("card_answer", on_card_answer)
+    bridge.on("card_dismiss", on_card_dismiss)
     pty.on_change = lambda: asyncio.create_task(bridge.send(pty.snapshot()))
     await bridge.start()
     await inbox.start()
     await window.start()
     logger.info(f"watching claude sessions, {config.tick_s}s tick")
 
-    bridge.on_connect(lambda: [last, inbox.snapshot(), pty.snapshot()])
+    bridge.on_connect(lambda: [last, inbox.snapshot(), cards.snapshot(), pty.snapshot()])
     try:
         while True:
             snapshot = await asyncio.to_thread(
@@ -138,7 +221,11 @@ async def serve():
             if last is None or snapshot["list"] != last["list"] or snapshot["degraded"] != last["degraded"]:
                 await bridge.send(snapshot)
                 last = snapshot
+            for event in turn_ends.update(snapshot["list"]):
+                await bridge.send(await with_reply(event))
             await inbox.reconcile()
+            await cards.expire()
+            await deliver_held()
             try:
                 await supervisor.tick(snapshot["list"])
             except Exception as e:

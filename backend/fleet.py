@@ -10,6 +10,8 @@ from typing import Any, Awaitable, Callable
 import websockets
 from loguru import logger
 
+from backend import auth
+
 Listener = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -83,7 +85,7 @@ class Fleet:
         delay = 0.5
         while True:
             try:
-                async with websockets.connect(self.url) as ws:
+                async with websockets.connect(self.url, additional_headers=auth.headers()) as ws:
                     self._ws, self.connected, delay = ws, True, 0.5
                     logger.info(f"fleet: connected to {self.url}")
                     async for raw in ws:

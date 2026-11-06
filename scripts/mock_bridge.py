@@ -1,7 +1,7 @@
 import asyncio, json, websockets
 
 SCRIPT = [
-    (0.5, {"type": "session", "id": "mock", "cwd": "/Users/ayan/Documents/GitHub/voice-agent"}),
+    (0.5, {"type": "session", "id": "mock", "cwd": "/Users/you/code/voice-agent"}),
     (0.2, {"type": "state", "value": "listening"}),
     (1.5, {"type": "transcript", "role": "user", "text": "should auth be its own service or just a module?"}),
     (0.2, {"type": "state", "value": "thinking"}),

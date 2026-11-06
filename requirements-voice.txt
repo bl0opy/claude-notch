@@ -1,0 +1,6 @@
+# Voice in and out, on top of the core. parakeet (speech to text) is MLX, so
+# Apple Silicon only; elsewhere set STT_BACKEND=deepgram and a DEEPGRAM_API_KEY.
+-r requirements.txt
+pipecat-ai[deepgram,local,silero,webrtc,kokoro]==1.11.0
+python-dotenv>=1.2.3
+parakeet-mlx==0.5.2; sys_platform == "darwin" and platform_machine == "arm64"

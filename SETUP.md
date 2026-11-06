@@ -19,7 +19,7 @@ clicks and hotkeys, but nothing spoken.
 
 ```bash
 pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install "pipecat-ai[deepgram,local,silero,webrtc,kokoro]" websockets python-dotenv parakeet-mlx
+.venv/bin/pip install -r requirements-voice.txt   # or requirements.txt, with "voice": false in settings.json
 scripts/install-hooks.sh           # add the permission hook to ~/.claude/settings.json
 ```
 
@@ -32,6 +32,21 @@ scripts/install-hooks.sh           # add the permission hook to ~/.claude/settin
   is backed up to `~/.claude/settings.json.bak-notch` either way.
 - Optional: `scripts/install-agentsd.sh` runs the daemon at login under launchd,
   so approvals work without `./run.sh`.
+- The notch's sockets ask for a token from `~/Library/Application Support/notch-agent/bridge-token`,
+  made the first time the daemon starts. After pulling this change, run `scripts/install-hooks.sh`
+  again: a hook without the token can't put up cards, and sessions fall back to their own prompts.
+  Under Claude Code's sandbox the file is only out of reach with `blockReadsOutsideWorkingDirectories`
+  on, or with that path in `sandbox.filesystem.denyRead`. Without one of those, a sandboxed
+  command can read it and answer permission questions.
+- Optional: `scripts/install-mcp.sh` gives every session two tools: `notch_ask` puts a small
+  form in the notch and waits for your answers, and `notch_show` puts up progress, a table or
+  a diff. Sessions fill in fixed card types and can't send interface code, and an answer only
+  goes back to the session that asked, so neither can approve anything.
+- Optional: `scripts/install-notch.sh` does the same for the notch, and installs the
+  daemon if it isn't yet. The notch stays hidden until the Claude desktop app opens
+  and goes away when it quits; turn that off with "only while the Claude app is open"
+  in Settings, or `"follow_claude_app": false`. Without the app installed it's always
+  up. Quitting it from its right-click menu keeps it off until your next login.
 
 ## Running
 
@@ -58,7 +73,7 @@ there's nothing for the notch to show. To see cards, start a session that asks:
 claude --permission-mode default     # or shift+tab in a running session
 ```
 
-Agents started from the notch's **+ agent** run `claude -p` in auto mode. For
+Agents the voice agent starts run `claude -p` in auto mode. For
 those, the hook asks about the risky ones only: `rm -rf`, `git push`, package
 installs, writes outside the project, `WebFetch`. With no daemon running, those
 are denied.
@@ -74,14 +89,16 @@ Start `./run.sh`, then open a Terminal tab in any repo and run
 | 2 | Click **allow** | Terminal prompt closes, command runs |
 | 3 | Trigger again, press ⌃⌥Y from any app | Same as 2 |
 | 4 | Trigger again, answer in the terminal | Card disappears within about 1s |
-| 5 | Trigger again, hold right ⌥, say "yes" | "Allowed wound-stage." |
+| 5 | Trigger again, hold right ⌥, say "yes" | "Allowed pose-lab." |
 | 6 | Ask for `git push --dry-run`, say "yes" | Refused: "say approve <project>" |
 | 7 | Say "approve <project>" | Allowed |
 | 8 | Prompts pending in two repos, say "what's waiting" | One sentence naming both |
 | 9 | "deny <project>" | Only that one is denied |
 | 10 | ⌃⌥J or ↗ | That Terminal tab comes forward |
 | 11 | "go to <project>", then "back" | Mic moves, then returns to the voice agent |
-| 12 | A 30s+ job in a session you aren't focused on | "<project> is done." |
+| 12 | A 30s+ job in a session you aren't focused on | "<project> is done." and a "done after …" line in the notch (a sound instead of the voice with voice off) |
+| 14 | With hosted agents on: +, type a bare repo name, tab, ↩ | Suggestions under the field, then the terminal window opens on the new agent |
+| 15 | ⌃⌥T from another app, type a line, ↩, esc | The line reaches the focused agent; the keyboard goes back to the app you were in |
 | 13 | Quit `./run.sh`, trigger a prompt | Plain Claude Code behaviour, no delay |
 
 Automated checks, no audio or API keys needed:
@@ -90,6 +107,9 @@ Automated checks, no audio or API keys needed:
 .venv/bin/python scripts/inbox_smoke.py      # inbox + the real hook
 .venv/bin/python scripts/commands_smoke.py   # spoken command grammar
 .venv/bin/python scripts/fleet_smoke.py      # voice answers questions end to end
+.venv/bin/python scripts/turns_smoke.py      # end-of-turn from the roster and the hook
+.venv/bin/python scripts/type_smoke.py       # typing to a session with no voice backend
+(cd shell/NotchAgent && swift test)          # the notch: cards, notices, modes, typing, sessions
 ```
 
 ## Troubleshooting
@@ -97,7 +117,7 @@ Automated checks, no audio or API keys needed:
 | Symptom | Check |
 |---|---|
 | No card | Is the session in auto mode? Is the daemon up (`lsof -iTCP:8766`)? Is the hook installed (`grep notch_hook ~/.claude/settings.json`)? |
-| "agents daemon offline" in the dashboard | Nothing on :8767. Start `./run.sh` or `scripts/install-agentsd.sh` |
+| "agents daemon offline" in the panel | Nothing on :8767. Start `./run.sh` or `scripts/install-agentsd.sh` |
 | `run.sh`: port 8765 taken | A backend is still running. `lsof -iTCP:8765`, then kill it |
 | Hotkeys or push-to-talk do nothing | Accessibility permission for the launching app |
 | Swift build error mentioning "module cache path" | The repo moved. `run.sh` fixes it; by hand, `rm -rf shell/NotchAgent/.build` |

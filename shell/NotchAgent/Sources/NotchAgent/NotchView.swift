@@ -8,6 +8,9 @@ enum IslandMode: Equatable {
     case compact
     /// The pill with a line from the supervisor under it, for a few seconds.
     case notice
+    /// A permission question, dropped down on its own so it can be answered
+    /// without going to find it.
+    case question
     /// The full panel.
     case expanded
 }
@@ -17,11 +20,7 @@ struct NotchView: View {
     let geometry: NotchGeometry
     var onIslandFrame: (CGRect) -> Void = { _ in }
 
-    private var mode: IslandMode {
-        if state.expanded { return .expanded }
-        if state.notice != nil { return .notice }
-        return state.dormant ? .dormant : .compact
-    }
+    private var mode: IslandMode { state.islandMode }
 
     private var stripHeight: CGFloat { max(geometry.notchHeight, 26) }
 
@@ -30,7 +29,8 @@ struct NotchView: View {
         case .dormant: return geometry.notchWidth
         case .compact: return geometry.notchWidth + (state.approvals.isEmpty ? 112 : 128)
         case .notice: return 400
-        case .expanded: return 480
+        case .question: return 480
+        case .expanded: return 680
         }
     }
 
@@ -39,13 +39,13 @@ struct NotchView: View {
         case .dormant: return IslandShape(shoulder: 6, radius: 10)
         case .compact: return IslandShape(shoulder: 8, radius: 14)
         case .notice: return IslandShape(shoulder: 10, radius: 20)
-        case .expanded: return IslandShape(shoulder: 12, radius: 28)
+        case .question, .expanded: return IslandShape(shoulder: 12, radius: 28)
         }
     }
 
     /// Opening overshoots a touch, like the island does; closing doesn't.
     private var morph: Animation {
-        mode == .expanded
+        mode == .expanded || mode == .question
             ? .spring(response: 0.42, dampingFraction: 0.74)
             : .spring(response: 0.36, dampingFraction: 0.9)
     }
@@ -61,6 +61,20 @@ struct NotchView: View {
             strip
             if mode == .expanded {
                 expanded
+                    .transition(.island)
+            } else if mode == .question {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !state.approvals.isEmpty {
+                        ApprovalStack(state: state)
+                    }
+                    ForEach(state.unseenCards) { card in
+                        CardView(state: state, card: card)
+                    }
+                }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 16)
+                    .frame(width: 480, alignment: .leading)
                     .transition(.island)
             } else if mode == .notice, let notice = state.notice {
                 NoticeLine(notice: notice)
@@ -84,6 +98,14 @@ struct NotchView: View {
                 Color.clear.preference(key: IslandFrameKey.self, value: proxy.frame(in: .global))
             }
         )
+        .contextMenu {
+            Button("Settings…") { SettingsWindow.shared.show() }
+            if state.hostedAgents {
+                Button("Terminal window") { TerminalWindow.shared.show() }
+            }
+            Divider()
+            Button("Quit Notch Agent") { NSApp.terminate(nil) }
+        }
         .animation(morph, value: mode)
         .animation(.spring(response: 0.36, dampingFraction: 0.86), value: state.approvals.isEmpty)
         .animation(.easeOut(duration: 0.18), value: state.phase)
@@ -97,12 +119,12 @@ struct NotchView: View {
             if mode != .dormant {
                 HStack(spacing: 6) {
                     StatusDot(phase: state.phase, live: state.micOpen)
-                    if !state.approvals.isEmpty {
-                        PendingBadge(count: state.approvals.count)
-                            .onTapGesture { state.snoozed = [] }
-                    } else if !state.agents.isEmpty {
-                        RosterBadge(agents: state.agents)
-                            .onTapGesture { state.show(.agents) }
+                    if state.waitingOnYou > 0 {
+                        PendingBadge(count: state.waitingOnYou)
+                            .onTapGesture {
+                                state.snoozed = []
+                                state.snoozedCards = []
+                            }
                     }
                 }
                 .padding(.leading, 14)
@@ -119,327 +141,418 @@ struct NotchView: View {
         .frame(height: stripHeight)
     }
 
+    /// Sessions down the side, most urgent first; the chosen one's
+    /// conversation beside them, and a line to answer it in.
     private var expanded: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
+        VStack(alignment: .leading, spacing: 10) {
             if !state.approvals.isEmpty {
                 ApprovalStack(state: state)
             }
-            if state.panel == .agents {
-                dashboard
-            } else {
-                focus
+            ForEach(state.cards) { card in
+                CardView(state: state, card: card)
             }
-            if !state.lastError.isEmpty {
-                Text(state.lastError)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(AgentPhase.error.tint)
-                    .lineLimit(2)
+            HStack(alignment: .top, spacing: 14) {
+                SessionSidebar(state: state)
+                    .frame(width: 170)
+                VStack(alignment: .leading, spacing: 10) {
+                    if let target = state.target {
+                        TargetLine(agent: target, open: { state.jump(to: target) })
+                    }
+                    if state.voice, !state.userTranscript.isEmpty || !state.assistantText.isEmpty {
+                        voiceTurn
+                    }
+                    if state.target != nil {
+                        ChatView(rows: state.chat, loading: state.chatFor != state.target?.id,
+                                 maxHeight: state.approvals.isEmpty ? 400 : 230)
+                    } else {
+                        Text(emptyHint)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.34))
+                    }
+                    if state.addingAgent {
+                        NewAgentField(state: state)
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
+                    ComposeField(state: state)
+                    if !state.lastError.isEmpty {
+                        Text(state.lastError)
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(AgentPhase.error.tint)
+                            .lineLimit(2)
+                    }
+                    footer
+                }
             }
-            footer
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 18)
         .padding(.top, 8)
-        .padding(.bottom, 18)
-        .frame(width: 480, alignment: .leading)
+        .padding(.bottom, 16)
+        .frame(width: 680, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// Two modes, not one stacked view: the agent you're talking to, or all of them.
-    private var header: some View {
-        HStack(spacing: 8) {
-            Tab(title: "focus", on: state.panel == .focus) { state.panel = .focus }
-            Tab(
-                title: state.agents.isEmpty ? "agents" : "agents \(state.agents.count)",
-                on: state.panel == .agents
-            ) { state.panel = .agents }
-            Spacer()
-        }
-    }
-
-    /// The focused agent: what you said, what it said, what it's doing.
-    private var focus: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    /// What you said to the voice agent and what it said back.
+    private var voiceTurn: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if !state.userTranscript.isEmpty {
                 FieldBlock(title: "you", text: state.userTranscript, color: Color(white: 0.85))
                     .frame(maxHeight: 54)
             }
             if !state.assistantText.isEmpty {
                 FieldBlock(title: "claude", text: state.assistantText, color: Color(white: 0.72))
-                    .frame(maxHeight: state.approvals.isEmpty ? 180 : 70)
+                    .frame(maxHeight: 90)
             }
             if !state.tools.isEmpty || state.phase == .thinking {
                 ActivityFeed(tools: state.tools, working: state.phase == .thinking)
             }
-            if state.userTranscript.isEmpty, state.assistantText.isEmpty, state.tools.isEmpty {
-                Text(state.micOpen ? "listening…" : "hold \(PushToTalk.key.label) and say something")
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.34))
-            }
         }
     }
 
-    /// Every claude session on the machine, and the button that adds one.
-    private var dashboard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if state.agents.isEmpty {
-                EmptyRoster(connected: state.rosterConnected, cwd: state.sessionCwd)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(state.agents) { agent in
-                            AgentRow(
-                                agent: agent,
-                                focused: agent.id == state.focused,
-                                owned: agent.owned || state.ownedIds.contains(agent.id),
-                                focus: {
-                                    state.focus(agent.id)
-                                    state.panel = .focus
-                                },
-                                jump: { state.jump(to: agent) },
-                                stop: { state.stop(agent) }
-                            )
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .scrollIndicators(.never)
-                .frame(maxHeight: state.approvals.isEmpty ? 232 : 110)
-            }
-
-            if let totals = state.fleetTotals {
-                FleetLine(totals: totals)
-            }
-
-            HStack(spacing: 10) {
-                Button(action: newAgent) {
-                    Text("+ agent")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Capsule().fill(Color(white: 0.18)))
-                        .foregroundStyle(Color(white: 0.85))
-                }
-                .buttonStyle(.plain)
-                if state.rosterDegraded {
-                    Text("partial roster")
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(AgentPhase.waiting.tint.opacity(0.8))
-                }
-                Spacer()
-                Text("click a row for the mic · ↗ to its terminal")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.34))
-            }
-        }
+    private var emptyHint: String {
+        if state.micOpen { return "listening…" }
+        if !state.rosterConnected { return "agents daemon offline — run ./run.sh" }
+        if state.voice { return "hold \(PushToTalk.key.label) and say something" }
+        return "no claude sessions running"
     }
 
     private var footer: some View {
         HStack(spacing: 10) {
-            // Only an agent the notch started can be cut off mid-turn; one
-            // running in a terminal has to be stopped there.
-            Button(action: { state.interrupt() }) {
-                Text(state.canInterrupt ? "stop" : "can't stop")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .padding(.horizontal, 12).padding(.vertical, 5)
-                    .background(Capsule().fill(Color(white: state.canInterrupt ? 0.18 : 0.11)))
-                    .foregroundStyle(Color(white: state.canInterrupt ? 0.85 : 0.4))
+            // Only an agent the notch started can be cut off mid-turn.
+            if state.canInterrupt {
+                Button(action: { state.interrupt() }) {
+                    Text("stop")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(Color(white: 0.18)))
+                        .foregroundStyle(Color(white: 0.85))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .disabled(!state.canInterrupt)
-            Text(state.micOpen
-                 ? "listening — one turn until you let go"
-                 : "hold \(PushToTalk.key.label) to talk")
+            Text(footerHint)
                 .font(.system(size: 9, design: .monospaced))
                 .foregroundStyle(state.micOpen ? AgentPhase.listening.tint : Color(white: 0.38))
             Spacer()
-            if !state.sessionCwd.isEmpty {
-                Text(URL(fileURLWithPath: state.sessionCwd).lastPathComponent)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundStyle(Color(white: 0.4))
+        }
+    }
+
+    private var footerHint: String {
+        if state.micOpen { return "listening — one turn until you let go" }
+        if state.addingAgent { return "↩ start · tab completes · esc cancels" }
+        if state.composing { return "↩ send · esc done" }
+        return state.voice ? "hold \(PushToTalk.key.label) to talk · ⌃⌥T to type" : "⌃⌥T to type · right-click for settings"
+    }
+}
+
+/// Every session down the side, grouped by how much it wants you. The chosen
+/// one is who the chat and the reply line are about.
+private struct SessionSidebar: View {
+    @ObservedObject var state: AgentState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(state.sections, id: \.title) { section in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(section.title)
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .textCase(.uppercase)
+                            .foregroundStyle(section.title == "needs you" ? AgentPhase.waiting.tint : Color(white: 0.36))
+                            .padding(.leading, 7)
+                            .padding(.bottom, 2)
+                        ForEach(section.agents) { agent in
+                            row(agent)
+                        }
+                    }
+                }
+                if state.hostedAgents {
+                    Button(action: toggleNewAgent) {
+                        Text(state.addingAgent ? "cancel" : "+ agent")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.6))
+                            .padding(.leading, 7)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollIndicators(.never)
+        .frame(maxHeight: 440)
+    }
+
+    private func row(_ agent: RemoteAgent) -> some View {
+        let on = agent.id == state.target?.id
+        return Button(action: { state.focus(agent.id) }) {
+            HStack(alignment: .top, spacing: 7) {
+                Circle()
+                    .fill(state.unread.contains(agent.id) ? Color(red: 0.36, green: 0.85, blue: 0.55) : agent.state.tint)
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 4)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.label)
+                        .font(.system(size: 11, weight: on ? .semibold : .regular))
+                        .foregroundStyle(Color(white: on ? 0.95 : 0.72))
+                        .lineLimit(2)
+                    Text(agent.project)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.38))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 7).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: on ? 0.15 : 0)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(agent.subtitle)
+    }
+
+    private func toggleNewAgent() {
+        if state.addingAgent {
+            state.cancelNewAgent()
+        } else {
+            state.requestNewAgent()
+        }
+    }
+}
+
+/// The conversation so far: what you said, what Claude said, one dim line per
+/// tool call. Kept scrolled to the latest.
+private struct ChatView: View {
+    let rows: [ChatRow]
+    let loading: Bool
+    let maxHeight: CGFloat
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 7) {
+                    if rows.isEmpty {
+                        Text(loading ? "loading…" : "nothing said yet")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.34))
+                    }
+                    ForEach(rows) { row in
+                        ChatLine(row: row).id(row.id)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .scrollIndicators(.never)
+            .frame(maxHeight: maxHeight)
+            .onAppear { proxy.scrollTo(rows.last?.id, anchor: .bottom) }
+            .onChange(of: rows) { _, _ in
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(rows.last?.id, anchor: .bottom) }
             }
         }
     }
-
-    private func newAgent() {
-        guard let path = PathPrompt.ask() else { return }
-        state.startAgent(in: path)
-        state.panel = .agents
-    }
 }
 
-private struct Tab: View {
-    let title: String
-    let on: Bool
-    let select: () -> Void
+private struct ChatLine: View {
+    let row: ChatRow
 
     var body: some View {
-        Button(action: select) {
-            Text(title)
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .textCase(.uppercase)
-                .padding(.horizontal, 9).padding(.vertical, 4)
-                .background(Capsule().fill(Color(white: on ? 0.16 : 0.09)))
-                .foregroundStyle(Color(white: on ? 0.88 : 0.42))
+        switch row.role {
+        case .tool:
+            HStack(alignment: .top, spacing: 7) {
+                Circle()
+                    .fill(Color(white: 0.3))
+                    .frame(width: 4, height: 4)
+                    .padding(.top, 5)
+                Text(row.text)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.42))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        case .you, .notch:
+            HStack(alignment: .top, spacing: 7) {
+                Text(row.role == .you ? "›" : "◦")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.5))
+                Text(row.text)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color(white: 0.94))
+                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            .padding(.top, 6)
+            .help(row.role == .notch ? "sent from the notch" : "")
+        case .claude:
+            MarkdownText(row.text)
         }
-        .buttonStyle(.plain)
     }
 }
 
-/// No rows is two different situations, and saying which one saves a hunt.
-private struct EmptyRoster: View {
-    let connected: Bool
-    let cwd: String
+/// "+ agent", inline: a path with the folders that finish it underneath.
+/// Return starts it, tab takes the first suggestion, esc closes it.
+private struct NewAgentField: View {
+    @ObservedObject var state: AgentState
+    @State private var text = AgentPath.initial
+    @State private var problem: String?
+    @FocusState private var focused: Bool
+
+    private var suggestions: [String] { AgentPath.suggestions(for: text) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(connected ? "no claude sessions running" : "agents daemon offline")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(Color(white: 0.7))
-            Text(connected
-                 ? (cwd.isEmpty ? "start one with + agent" : "start one with + agent, or talk to this one")
-                 : "start it: scripts/install-agentsd.sh — it serves :8767 and :8766")
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(Color(white: 0.36))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 6)
-    }
-}
-
-/// One session: where it is, what it's doing, what it has spent, and whether
-/// the notch can do anything to it beyond watch.
-/// Every session at once: how many, how many tokens, what that would cost, and
-/// which window is closest to compacting.
-private struct FleetLine: View {
-    let totals: FleetTotals
-
-    var body: some View {
-        HStack(spacing: 8) {
-            cell("\(totals.sessions)", totals.sessions == 1 ? "agent" : "agents", Color(white: 0.45))
-            divider
-            cell(totals.tokenLabel, "tokens", Color(white: 0.45))
-            divider
-            cell(totals.costLabel, "at api rates", Color(white: 0.45))
-            divider
-            cell(
-                totals.crowded > 0 ? "\(totals.crowded) near full" : totals.contextLabel,
-                "context",
-                totals.pressureTint
+            HStack(spacing: 8) {
+                Text("+")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.7))
+                TextField("", text: $text, prompt: Text("a folder for the new agent").foregroundStyle(Color(white: 0.32)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.9))
+                    .focused($focused)
+                    .onSubmit(submit)
+                    .onExitCommand { state.cancelNewAgent() }
+                    .onKeyPress(.tab) {
+                        guard let first = suggestions.first else { return .ignored }
+                        text = first
+                        return .handled
+                    }
+                    .onChange(of: text) { _, _ in problem = nil }
+                Button("start", action: submit)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.85))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(white: 0.12))
+                    .strokeBorder(Color(white: problem == nil ? 0.26 : 0.4), lineWidth: 1)
             )
-            Spacer()
-        }
-        .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color(white: 0.12)))
-    }
 
-    private var divider: some View {
-        Rectangle().fill(Color(white: 0.22)).frame(width: 1, height: 14)
-    }
-
-    private func cell(_ value: String, _ label: String, _ tint: Color) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(value)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(tint == Color(white: 0.45) ? Color(white: 0.82) : tint)
-            Text(label)
-                .font(.system(size: 8, design: .monospaced))
-                .foregroundStyle(Color(white: 0.38))
-        }
-    }
-}
-
-private struct AgentRow: View {
-    let agent: RemoteAgent
-    let focused: Bool
-    /// Started by the notch — from the roster, or from what the voice backend
-    /// says it owns, which is the fresher of the two.
-    let owned: Bool
-    let focus: () -> Void
-    let jump: () -> Void
-    let stop: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: focus) {
-            HStack(alignment: .top, spacing: 8) {
-                Circle()
-                    .fill(agent.state.tint)
-                    .frame(width: 5, height: 5)
-                    .padding(.top, 5)
-                VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(agent.title)
-                            .foregroundStyle(Color(white: focused ? 0.95 : 0.84))
+            if let problem {
+                Text(problem)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(AgentPhase.error.tint)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            } else if !suggestions.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(suggestions, id: \.self) { suggestion in
+                        Text((suggestion as NSString).lastPathComponent)
+                            .font(.system(size: 9, design: .monospaced))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(Capsule().fill(Color(white: 0.14)))
+                            .foregroundStyle(Color(white: 0.7))
                             .lineLimit(1)
-                            .truncationMode(.middle)
-                        if focused {
-                            Text("mic")
-                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                                .padding(.horizontal, 4).padding(.vertical, 1)
-                                .background(Capsule().fill(AgentPhase.listening.tint.opacity(0.22)))
-                                .foregroundStyle(AgentPhase.listening.tint)
-                        }
-                        if !owned {
-                            Text(agent.reachable ? "terminal" : "read-only")
-                                .font(.system(size: 8, design: .monospaced))
-                                .foregroundStyle(Color(white: 0.34))
-                        }
-                    }
-                    Text(agent.subtitle)
-                        .foregroundStyle(Color(white: agent.state == .waiting ? 0.62 : 0.44))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 6)
-                if hovering {
-                    HStack(spacing: 4) {
-                        if owned && agent.state == .working {
-                            RowAction(symbol: "■", help: "stop", action: stop)
-                        }
-                        if agent.canJump {
-                            RowAction(symbol: "↗", help: "show its terminal", action: jump)
-                        }
-                    }
-                }
-                VStack(alignment: .trailing, spacing: 1) {
-                    Text(compactTokens(agent.tokensOut))
-                        .foregroundStyle(Color(white: 0.42))
-                        .monospacedDigit()
-                    if agent.subagents > 0 {
-                        Text("\(agent.subagents) sub")
-                            .foregroundStyle(Color(white: 0.3))
+                            .onTapGesture {
+                                text = suggestion
+                                focused = true
+                            }
                     }
                 }
             }
-            .font(.system(size: 10, design: .monospaced))
-            .padding(.vertical, 3)
-            .padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(focused ? Color(white: 0.14) : hovering ? Color(white: 0.1) : .clear)
-            )
         }
-        .buttonStyle(.plain)
-        .onHover { hovering = $0 }
+        .onAppear { DispatchQueue.main.async { focused = true } }
+        .onChange(of: state.newAgentRequest) { _, _ in DispatchQueue.main.async { focused = true } }
+        .onChange(of: state.composeDismiss) { _, _ in focused = false }
+        .onChange(of: focused) { _, value in state.composing = value }
+        .onDisappear { state.composing = false }
+    }
+
+    private func submit() {
+        problem = state.submitNewAgent(text)
     }
 }
 
-private struct RowAction: View {
-    let symbol: String
-    let help: String
-    let action: () -> Void
+/// A line typed to the target agent. Return sends it; ⌘Return steers a
+/// hosted one, cutting its turn short first, the way talking over it does.
+private struct ComposeField: View {
+    @ObservedObject var state: AgentState
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var disabled: Bool { !state.voice && state.target == nil }
 
     var body: some View {
-        Button(action: action) {
-            Text(symbol)
-                .font(.system(size: 10, weight: .semibold))
-                .frame(width: 20, height: 16)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(white: 0.2)))
-                .foregroundStyle(Color(white: 0.85))
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                Text("›")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(white: focused ? 0.8 : 0.4))
+                TextField("", text: $text, prompt: Text("reply to \(state.targetName)").foregroundStyle(Color(white: 0.32)))
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.9))
+                    .focused($focused)
+                    .disabled(disabled)
+                    // The field editor takes Return for itself, so ⌘ is read
+                    // off the keyboard as it's submitted.
+                    .onSubmit { submit(steer: NSEvent.modifierFlags.contains(.command)) }
+                    .onExitCommand { focused = false }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(Color(white: focused ? 0.12 : 0.08))
+                    .strokeBorder(Color(white: focused ? 0.26 : 0.14), lineWidth: 1)
+            )
+            if !state.typedStatus.isEmpty {
+                Text(state.typedStatus)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Color(white: 0.5))
+                    .lineLimit(1)
+                    .transition(.opacity)
+            }
         }
-        .buttonStyle(.plain)
-        .help(help)
+        .onChange(of: focused) { _, value in state.composing = value }
+        .onChange(of: state.composeRequest) { _, _ in take() }
+        .onChange(of: state.composeDismiss) { _, _ in focused = false }
+        // ⌃⌥T on a folded notch opens the panel first; the field it asked
+        // for only exists once it's open.
+        .onAppear { if state.composing { take() } }
+        .animation(.easeOut(duration: 0.15), value: state.typedStatus)
+    }
+
+    private func take() {
+        DispatchQueue.main.async { focused = true }
+    }
+
+    private func submit(steer: Bool) {
+        guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        state.send(text: text, steer: steer)
+        text = ""
+    }
+}
+
+/// Typing only: who the compose field is talking to, and what it's doing.
+/// The chosen session: where it is, what it's doing, and a way into it.
+private struct TargetLine: View {
+    let agent: RemoteAgent
+    let open: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(agent.title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(white: 0.6))
+                .lineLimit(1)
+                .fixedSize()
+            Text(agent.subtitle)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color(white: agent.state == .waiting ? 0.7 : 0.42))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            if agent.canJump {
+                Button(action: open) {
+                    Text(agent.desktop ? "open in app ↗" : "↗")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Color(white: 0.5))
+                }
+                .buttonStyle(.plain)
+            }
+        }
     }
 }
 
@@ -460,7 +573,9 @@ private struct NoticeLine: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle()
-                .fill(notice.attention ? AgentPhase.waiting.tint : Color(white: 0.45))
+                .fill(notice.attention ? AgentPhase.waiting.tint
+                      : notice.kind == .done ? Color(red: 0.36, green: 0.85, blue: 0.55)
+                      : Color(white: 0.45))
                 .frame(width: 6, height: 6)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 3) {
@@ -513,27 +628,6 @@ private struct PendingBadge: View {
     }
 }
 
-/// How many agents there are and the worst thing any of them is doing, small
-/// enough to sit beside the status dot when the notch is closed.
-private struct RosterBadge: View {
-    let agents: [RemoteAgent]
-
-    private var worst: RemoteAgent.State {
-        agents.map(\.state).min(by: { $0.rank < $1.rank }) ?? .idle
-    }
-
-    var body: some View {
-        HStack(spacing: 3) {
-            Text("\(agents.count)")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Color(white: 0.62))
-            Circle()
-                .fill(worst.tint)
-                .frame(width: 4, height: 4)
-        }
-    }
-}
-
 /// Every open permission question on the machine. The oldest gets the full card
 /// and the keys; the rest wait underneath as one-liners you can clear in place.
 private struct ApprovalStack: View {
@@ -542,14 +636,26 @@ private struct ApprovalStack: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let top = state.topApproval {
-                ApprovalCard(
-                    request: top,
-                    waiting: state.approvals.count - 1,
-                    canJump: state.agent(for: top)?.canJump ?? false,
-                    answer: { approved, always in state.answer(top, approved: approved, always: always) },
-                    jump: { state.jump(to: top) },
-                    hide: { state.snoozeApprovals() }
-                )
+                if top.questions.isEmpty {
+                    ApprovalCard(
+                        request: top,
+                        waiting: state.approvals.count - 1,
+                        canJump: state.agent(for: top)?.canJump ?? false,
+                        answer: { approved, always in state.answer(top, approved: approved, always: always) },
+                        explain: { state.explain(top) },
+                        jump: { state.jump(to: top) },
+                        hide: { state.snoozeApprovals() }
+                    )
+                } else {
+                    QuestionCard(
+                        request: top,
+                        canJump: state.agent(for: top)?.canJump ?? false,
+                        choose: { state.choose(top, answers: $0) },
+                        jump: { state.jump(to: top) },
+                        hide: { state.snoozeApprovals() }
+                    )
+                    .id(top.id)
+                }
             }
             ForEach(state.approvals.dropFirst().prefix(3)) { request in
                 ApprovalLine(
@@ -587,6 +693,7 @@ private struct ApprovalCard: View {
     let waiting: Int
     let canJump: Bool
     let answer: (_ approved: Bool, _ always: Bool) -> Void
+    let explain: () -> Void
     let jump: () -> Void
     let hide: () -> Void
 
@@ -600,7 +707,7 @@ private struct ApprovalCard: View {
                     .foregroundStyle(accent)
                     .lineLimit(1)
                 if request.source == "terminal" {
-                    Text("also in its terminal")
+                    Text("also asked in its session")
                         .font(.system(size: 8, design: .monospaced))
                         .foregroundStyle(Color(white: 0.36))
                 }
@@ -627,12 +734,39 @@ private struct ApprovalCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
 
+            if !request.why.isEmpty {
+                Text(inlineMarkdown(request.why))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(white: 0.62))
+                    .lineLimit(3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if !request.explanation.isEmpty {
+                Text(inlineMarkdown(request.explanation))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Color(white: 0.88))
+                    .lineSpacing(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 9).padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color(white: 0.16)))
+            }
+
             HStack(spacing: 6) {
                 pill("allow", tint: allowTint) { answer(true, false) }
                 if request.canAlways {
                     pill("always", tint: allowTint.opacity(0.75)) { answer(true, true) }
+                        .help(request.always.isEmpty ? "allow this from now on" : "adds \(request.always)")
                 }
                 pill("deny", tint: Color(white: 0.6)) { answer(false, false) }
+                if request.explanation.isEmpty {
+                    pill(request.explaining ? "reading…" : "why?", tint: Color(white: 0.6), action: explain)
+                        .disabled(request.explaining)
+                        .help("what this does and why, without answering it")
+                }
                 if canJump {
                     pill("↗", tint: Color(white: 0.6), action: jump)
                 }
@@ -655,9 +789,8 @@ private struct ApprovalCard: View {
     }
 
     private var hint: String {
-        let name = request.project.isEmpty ? "it" : request.project
-        let voice = request.risky ? "say \"approve \(name)\"" : "say yes · ⌃⌥Y"
-        return waiting > 0 ? "\(voice) · \(waiting) more" : voice
+        let keys = request.always.isEmpty ? "⌃⌥Y · ⌃⌥N" : "always: \(request.always)"
+        return waiting > 0 ? "\(keys) · \(waiting) more" : keys
     }
 
     private func pill(_ title: String, tint: Color, action: @escaping () -> Void) -> some View {
@@ -669,6 +802,118 @@ private struct ApprovalCard: View {
                 .foregroundStyle(tint)
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// One of Claude's multiple-choice questions. With one question that takes one
+/// answer, picking is answering; otherwise picks collect until send.
+private struct QuestionCard: View {
+    let request: ApprovalRequest
+    let canJump: Bool
+    let choose: ([String: Any]) -> Void
+    let jump: () -> Void
+    let hide: () -> Void
+    @State private var picked: [String: Set<String>] = [:]
+
+    private var oneTap: Bool { request.questions.count == 1 && !request.questions[0].multiSelect }
+    private var complete: Bool { request.questions.allSatisfy { !(picked[$0.text] ?? []).isEmpty } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 6) {
+                Text(request.project.isEmpty ? "Claude is asking" : "\(request.project) is asking")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(AgentPhase.waiting.tint)
+                Spacer()
+                if canJump {
+                    small("open in app ↗", action: jump)
+                }
+                small("hide", action: hide)
+            }
+            ForEach(request.questions, id: \.text) { question in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(inlineMarkdown(question.text))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(white: 0.94))
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(question.options, id: \.label) { option in
+                        row(option, of: question)
+                    }
+                }
+            }
+            if !oneTap {
+                Button(action: send) {
+                    Text("send")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(allowTint.opacity(complete ? 0.25 : 0.08)))
+                        .foregroundStyle(allowTint.opacity(complete ? 1 : 0.4))
+                }
+                .buttonStyle(.plain)
+                .disabled(!complete)
+            }
+        }
+        .padding(11)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color(white: 0.11))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(AgentPhase.waiting.tint.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    private func row(_ option: ApprovalRequest.Question.Option, of question: ApprovalRequest.Question) -> some View {
+        let on = picked[question.text]?.contains(option.label) ?? false
+        return Button(action: { tap(option.label, in: question) }) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(option.label)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color(white: on ? 1 : 0.86))
+                if !option.description.isEmpty {
+                    Text(inlineMarkdown(option.description))
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color(white: 0.52))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(on ? allowTint.opacity(0.22) : Color(white: 0.16)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func small(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundStyle(Color(white: 0.45))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func tap(_ label: String, in question: ApprovalRequest.Question) {
+        if oneTap {
+            choose([question.text: label])
+        } else if question.multiSelect {
+            picked[question.text, default: []].formSymmetricDifference([label])
+        } else {
+            picked[question.text] = [label]
+        }
+    }
+
+    private func send() {
+        var answers: [String: Any] = [:]
+        for question in request.questions {
+            let labels = picked[question.text] ?? []
+            answers[question.text] = question.multiSelect
+                ? question.options.map(\.label).filter(labels.contains) as Any
+                : labels.first as Any
+        }
+        choose(answers)
     }
 }
 
@@ -692,7 +937,9 @@ private struct ApprovalLine: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 4)
-            mini("✓", tint: allowTint) { answer(true) }
+            if request.questions.isEmpty {
+                mini("✓", tint: allowTint) { answer(true) }
+            }
             mini("✕", tint: Color(white: 0.6)) { answer(false) }
             if canJump {
                 mini("↗", tint: Color(white: 0.6), action: jump)

@@ -6,6 +6,30 @@ import Foundation
 /// answering in either place closes both. `owned` ones are the notch's own
 /// agents, where nobody answering means no.
 struct ApprovalRequest: Identifiable, Equatable {
+    /// One of Claude's multiple-choice questions.
+    struct Question: Equatable {
+        struct Option: Equatable {
+            let label: String
+            let description: String
+        }
+
+        let text: String
+        let header: String
+        let options: [Option]
+        let multiSelect: Bool
+
+        init?(_ raw: [String: Any]) {
+            guard let text = raw["question"] as? String, !text.isEmpty else { return nil }
+            self.text = text
+            header = raw["header"] as? String ?? ""
+            multiSelect = raw["multiSelect"] as? Bool ?? false
+            options = (raw["options"] as? [[String: Any]] ?? []).compactMap {
+                guard let label = $0["label"] as? String else { return nil }
+                return Option(label: label, description: $0["description"] as? String ?? "")
+            }
+        }
+    }
+
     let id: String
     let source: String
     let sessionId: String
@@ -20,6 +44,15 @@ struct ApprovalRequest: Identifiable, Equatable {
     let risky: Bool
     /// Claude Code offered a rule for it, so "always" is possible.
     let canAlways: Bool
+    /// The rule "always" adds, as Claude Code writes it: `Bash(npm test:*)`.
+    let always: String
+    /// What the agent said before asking, or what it was asked.
+    let why: String
+    /// Asked for with "why?": what the call does, while the question stays open.
+    let explanation: String
+    let explaining: Bool
+    /// Not empty: Claude is asking you to choose, not asking to be allowed.
+    let questions: [Question]
     let created: Date
 
     init?(_ raw: [String: Any]) {
@@ -34,6 +67,11 @@ struct ApprovalRequest: Identifiable, Equatable {
         summary = raw["summary"] as? String ?? ""
         risky = raw["risky"] as? Bool ?? false
         canAlways = raw["canAlways"] as? Bool ?? false
+        always = raw["always"] as? String ?? ""
+        why = raw["why"] as? String ?? ""
+        explanation = raw["explanation"] as? String ?? ""
+        explaining = raw["explaining"] as? Bool ?? false
+        questions = (raw["questions"] as? [[String: Any]] ?? []).compactMap(Question.init)
         created = Date(timeIntervalSince1970: (raw["created"] as? Double ?? 0) / 1000)
     }
 

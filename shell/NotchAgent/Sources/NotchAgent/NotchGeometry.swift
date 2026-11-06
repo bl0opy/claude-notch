@@ -7,8 +7,22 @@ struct NotchGeometry {
     let notchHeight: CGFloat
     let hasNotch: Bool
 
-    static func current() -> NotchGeometry {
-        let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main!
+    /// The MacBook's own display whenever it's on, including at a resolution
+    /// that hides the notch. Lid closed, the display with the menu bar.
+    static func pick<S>(_ screens: [S], notched: (S) -> Bool, builtIn: (S) -> Bool) -> S? {
+        screens.first(where: notched) ?? screens.first(where: builtIn) ?? screens.first
+    }
+
+    private static func isBuiltIn(_ screen: NSScreen) -> Bool {
+        let id = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        return id.map { CGDisplayIsBuiltin($0) != 0 } ?? false
+    }
+
+    /// nil only in the moment macOS has no displays at all, mid-reconfiguration.
+    static func current() -> NotchGeometry? {
+        guard let screen = pick(NSScreen.screens, notched: { $0.safeAreaInsets.top > 0 }, builtIn: isBuiltIn) else {
+            return nil
+        }
         let inset = screen.safeAreaInsets.top
         let left = screen.auxiliaryTopLeftArea?.width ?? 0
         let right = screen.auxiliaryTopRightArea?.width ?? 0

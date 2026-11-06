@@ -9,10 +9,13 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+
+os.environ["NOTCH_TOKEN_FILE"] = os.path.join(tempfile.mkdtemp(), "token")
 
 from agentsd.inbox import Inbox  # noqa: E402
 from backend import processor as processor_module  # noqa: E402

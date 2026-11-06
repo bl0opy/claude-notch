@@ -1,0 +1,3 @@
+# The agents daemon and the notch: everything but voice.
+websockets>=17.1,<18
+loguru>=0.7.3,<0.8

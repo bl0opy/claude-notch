@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import SwiftUI
 
 enum AgentPhase: String {
@@ -39,27 +39,39 @@ struct ToolEvent: Identifiable {
     var status: Status = .running
 }
 
-/// A line from the supervisor about an agent you aren't focused on: how a long
-/// turn is going, or that it looks stuck. Shown in the notch for a few seconds.
+/// A line about an agent you aren't talking to: how a long turn is going, that
+/// it looks stuck, or that it's finished. Shown in the notch for a few seconds.
 struct Notice: Identifiable, Equatable {
+    enum Kind: String { case progress, stuck, done }
+
     let id = UUID()
     let sessionId: String
     let project: String
     let line: String
-    let attention: Bool
+    let kind: Kind
+
+    var attention: Bool { kind == .stuck }
 
     /// Long enough to read a sentence; a stuck agent stays up a little longer.
     var lifetime: Duration { attention ? .seconds(14) : .seconds(9) }
-}
 
-/// The panel shows one thing at a time: the agent you're talking to, or all of them.
-enum PanelMode: String {
-    case focus, agents
+    /// "done after 4 minutes", in the words the notice reads out.
+    static func doneLine(project: String, seconds: Int) -> String {
+        let name = project.isEmpty ? "An agent" : project
+        guard seconds >= 60 else { return "\(name) done after \(max(seconds, 1)) seconds" }
+        let minutes = seconds / 60
+        return "\(name) done after \(minutes) minute\(minutes == 1 ? "" : "s")"
+    }
 }
 
 @MainActor
 final class AgentState: ObservableObject {
-    @Published var phase: AgentPhase = .disconnected
+    /// Voice in and out, from settings.json at launch. Off, there's no voice
+    /// backend and the notch is typed to.
+    let voice = Settings.voice
+    /// Agents started from the notch, in its own terminal window. Read at launch.
+    let hostedAgents = Settings.hostedAgents
+    @Published var phase: AgentPhase = Settings.voice ? .disconnected : .idle
     @Published var userTranscript: String = ""
     @Published var assistantText: String = ""
     @Published var tools: [ToolEvent] = []
@@ -70,6 +82,12 @@ final class AgentState: ObservableObject {
     /// Questions you've waved away for now. The panel stops opening for them,
     /// and opens again for the next new one.
     @Published var snoozed: Set<String> = []
+    /// Put away because the Claude app isn't open. Sessions keep being watched,
+    /// so it's current the moment it comes back.
+    private(set) var hidden = false
+    /// You're in the Claude app, where all of this is already on screen. The
+    /// notch stays out of the way until you hover it or switch away.
+    @Published var claudeInFront = false
     @Published var hovering: Bool = false {
         didSet {
             // Moving over the lingering panel and away is how you dismiss it.
@@ -92,11 +110,8 @@ final class AgentState: ObservableObject {
     /// The one that hears the mic and speaks. nil = the voice agent's own session.
     @Published var focused: String?
     @Published var rosterDegraded: Bool = false
-    @Published var fleetTotals: FleetTotals? = nil
     /// Sessions the voice backend started, which is what makes them interruptible.
     @Published var ownedIds: Set<String> = []
-    /// Which half of the panel is showing.
-    @Published var panel: PanelMode = .focus
     /// Whether the agents daemon is answering at all, which is a different thing
     /// from there being no agents.
     @Published var rosterConnected: Bool = false
@@ -104,9 +119,80 @@ final class AgentState: ObservableObject {
     @Published var notice: Notice?
     private var noticeTimer: Task<Void, Never>?
 
+    /// What sessions have put in the notch with notch_ask and notch_show.
+    @Published var cards: [NotchCard] = []
+    /// Answers so far, kept here so they outlast the card's view when the
+    /// island changes shape around it.
+    @Published var cardDrafts: [String: [String: CardValue]] = [:]
+    /// Waved away for now, like `snoozed`. It only hides the drop-down.
+    @Published var snoozedCards: Set<String> = []
+
+    /// Turns that finished since you last looked at them.
+    @Published var unread: Set<String> = []
+    private var wasExpanded = false
+
+    /// True while a field in the notch has the keyboard — the compose line or
+    /// the new-agent path: the panel stays open with the cursor elsewhere,
+    /// since you're mid-sentence.
+    @Published var composing: Bool = false
+    /// The agents tab's inline "+ agent" path field is open.
+    @Published var addingAgent: Bool = false
+    @Published var newAgentRequest: Int = 0
+    /// Bumped to pull the keyboard into the compose field (⌃⌥T), and to let
+    /// go of it when the notch stops being the key window.
+    @Published var composeRequest: Int = 0
+    @Published var composeDismiss: Int = 0
+    /// The target session's conversation so far, refreshed while the panel is open.
+    @Published var chat: [ChatRow] = []
+    @Published var chatFor: String?
+    private var chatAsked = Date.distantPast
+    private static let chatEvery: TimeInterval = 2
+
+    /// What became of the last typed line, while it's worth showing.
+    @Published var typedStatus: String = ""
+    private var typedTarget: String?
+    private var typedTimer: Task<Void, Never>?
+
+    /// Who a typed line goes to. With voice, nil is the voice agent's own
+    /// session; typing only, there's no such thing, so it's the chosen row, or
+    /// failing that the one most likely to be wanted.
+    var target: RemoteAgent? {
+        if let focused, let agent = agents.first(where: { $0.id == focused }) { return agent }
+        if voice { return nil }
+        return agents.first(where: \.hosted) ?? prioritized.first
+    }
+
+    /// How much a session wants you: a question, something it says it needs,
+    /// a turn you haven't seen the end of, then the rest.
+    func urgency(_ agent: RemoteAgent) -> Int {
+        if agent.state == .waiting || approvals.contains(where: { $0.sessionId == agent.id }) { return 0 }
+        if cards.contains(where: { $0.isAsk && $0.sessionId == agent.id }) { return 0 }
+        if !agent.needs.isEmpty { return 1 }
+        if unread.contains(agent.id) { return 2 }
+        return agent.state == .working ? 3 : 4
+    }
+
+    /// The sidebar, most urgent first.
+    var sections: [(title: String, agents: [RemoteAgent])] {
+        let titled = [(0...1, "needs you"), (2...2, "finished"), (3...3, "working"), (4...4, "idle")]
+        return titled.compactMap { range, title in
+            let rows = agents.filter { range.contains(urgency($0)) }
+                .sorted { (urgency($0), $0.label) < (urgency($1), $1.label) }
+            return rows.isEmpty ? nil : (title, rows)
+        }
+    }
+
+    var prioritized: [RemoteAgent] { sections.flatMap(\.agents) }
+
+    var targetName: String {
+        if let target { return target.title.isEmpty ? "that agent" : target.title }
+        return voice ? "the voice agent" : "an agent"
+    }
+
     /// A foreign agent — one started in a terminal — can be talked to and
     /// approved, but not interrupted.
     var canInterrupt: Bool {
+        if !voice { return target?.hosted ?? false }
         guard let focused else { return true }
         if ownedIds.contains(focused) { return true }
         guard let agent = agents.first(where: { $0.id == focused }) else { return true }
@@ -116,7 +202,19 @@ final class AgentState: ObservableObject {
     /// The panel is only ever open under the cursor, or while the talk key is
     /// held, and a little after. Work in progress shows as the pill instead, which is enough to see
     /// Claw'd without the panel covering what you're doing.
-    var expanded: Bool { hovering || micOpen || lingering }
+    var expanded: Bool { hovering || micOpen || lingering || composing }
+
+    /// What the island is showing: folded away, the pill, a notice, a
+    /// question, or the panel. A question you haven't hidden outranks a notice.
+    var islandMode: IslandMode {
+        if expanded { return .expanded }
+        // The open tab may be a different session, so a waiting question still
+        // shows as a count on the pill. It drops down once you switch away.
+        if claudeInFront { return approvals.isEmpty && !cards.contains(where: \.isAsk) ? .dormant : .compact }
+        if !unseenApprovals.isEmpty || !unseenCards.isEmpty { return .question }
+        if notice != nil { return .notice }
+        return dormant ? .dormant : .compact
+    }
 
     /// After the talk key comes up the panel stays open through the reply and
     /// a few seconds past it, so you can read what it heard and what it said.
@@ -132,7 +230,7 @@ final class AgentState: ObservableObject {
 
     /// Anything that deserves the notch being visible.
     var busy: Bool {
-        if micOpen || !approvals.isEmpty || notice != nil { return true }
+        if micOpen || !approvals.isEmpty || !cards.isEmpty || notice != nil { return true }
         if [.thinking, .speaking, .waiting, .error].contains(phase) { return true }
         return agents.contains { $0.state == .working || $0.state == .waiting }
     }
@@ -159,11 +257,31 @@ final class AgentState: ObservableObject {
         }
     }
 
+    func setHidden(_ value: Bool) {
+        hidden = value
+        if value {
+            hovering = false
+            endCompose()
+        } else {
+            // Coming back is news: stay out as the pill, not folded away.
+            lastBusy = Date()
+            settle()
+        }
+    }
+
     func settle() {
         let now = Date()
         if busy { lastBusy = now }
         let fold = !busy && !hovering && now.timeIntervalSince(lastBusy) > Settings.foldAfter
         if fold != dormant { dormant = fold }
+
+        // Open, the session stays put so a line isn't typed to whatever just
+        // became urgent. Closed, the next look starts at what needs you most.
+        if expanded != wasExpanded {
+            wasExpanded = expanded
+            if !voice { focused = expanded ? target?.id : nil }
+        }
+        if expanded, now.timeIntervalSince(chatAsked) >= Self.chatEvery { refreshChat() }
 
         if lingering {
             if micOpen || [.listening, .thinking, .speaking].contains(phase) {
@@ -176,16 +294,21 @@ final class AgentState: ObservableObject {
         }
     }
 
+    var unseenCards: [NotchCard] { cards.filter { !snoozedCards.contains($0.id) } }
+
+    /// Questions and forms together, for the count on the pill.
+    var waitingOnYou: Int { approvals.count + cards.filter(\.isAsk).count }
+
     var unseenApprovals: [ApprovalRequest] { approvals.filter { !snoozed.contains($0.id) } }
 
     /// The one ⌃⌥Y / ⌃⌥N / ⌃⌥J act on.
     var topApproval: ApprovalRequest? { approvals.first }
 
-    private var client: BridgeClient?
+    private var client: MessageSink?
     /// The agents daemon holds the approvals, so answers go there, not to the voice backend.
-    private var fleet: BridgeClient?
+    private(set) var fleet: MessageSink?
 
-    func attach(_ client: BridgeClient, fleet: BridgeClient) {
+    func attach(_ client: MessageSink, fleet: MessageSink) {
         self.client = client
         self.fleet = fleet
     }
@@ -210,15 +333,25 @@ final class AgentState: ObservableObject {
             if message["final"] as? Bool ?? true {
                 assistantText = ""
                 tools = []
-                panel = .focus
             }
         case "assistant_delta":
             assistantText += message["text"] as? String ?? ""
         case "assistant_done":
             if let text = message["text"] as? String, !text.isEmpty { assistantText = text }
         case "approvals":
+            let before = Set(approvals.map(\.id))
             approvals = (message["list"] as? [[String: Any]] ?? []).compactMap(ApprovalRequest.init)
             snoozed.formIntersection(approvals.map(\.id))
+            // The first list after connecting is what was already waiting, not news.
+            if approvalsLoaded, approvals.contains(where: { !before.contains($0.id) }) { chime(.attention) }
+            approvalsLoaded = true
+        case "cards":
+            let before = Set(cards.map(\.id))
+            cards = (message["list"] as? [[String: Any]] ?? []).compactMap(NotchCard.init)
+            let live = Set(cards.map(\.id))
+            snoozedCards.formIntersection(live)
+            cardDrafts = cardDrafts.filter { live.contains($0.key) }
+            if cards.contains(where: { $0.isAsk && !before.contains($0.id) }) { chime(.attention) }
         case "tool":
             let event = ToolEvent(
                 id: message["id"] as? String ?? UUID().uuidString,
@@ -238,12 +371,22 @@ final class AgentState: ObservableObject {
                 ($0.state.rank, $0.project) < ($1.state.rank, $1.project)
             }
             rosterDegraded = message["degraded"] as? Bool ?? false
-            fleetTotals = FleetTotals(message["fleet"] as? [String: Any])
+            unread.formIntersection(rows.map(\.id))
         case "fleet_event":
             post(message)
+        case "typed":
+            guard let id = message["id"] as? String, id == typedTarget else { return }
+            showTyped(message["status"] as? String ?? "", detail: message["detail"] as? String ?? "")
         case "spawned":
             // A session the agents daemon just started (or resumed): show it.
-            if let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
+            if Settings.hostedAgents, let id = message["id"] as? String { TerminalWindow.shared.show(session: id) }
+        case "chat":
+            guard let id = message["id"] as? String, id == target?.id else { return }
+            let rows = message["rows"] as? [[String: Any]] ?? []
+            let next = rows.enumerated().compactMap { ChatRow($1, index: $0) }
+            if expanded { unread.remove(id) }
+            if next != chat || chatFor != id { chat = next }
+            chatFor = id
         case "focus":
             focused = message["id"] as? String
         case "owned":
@@ -260,20 +403,32 @@ final class AgentState: ObservableObject {
         }
     }
 
-    /// Supervisor lines about the agent you're talking to are noise: you can hear it.
+    /// With voice, lines about the agent you're talking to are noise: you can
+    /// hear it. Typing, you can't, so every agent's news shows. A turn's end
+    /// shows only when it ran long enough that you'd have looked away.
     private func post(_ message: [String: Any]) {
-        guard let event = message["event"] as? String, event == "progress" || event == "stuck",
-              let sessionId = message["sessionId"] as? String, sessionId != focused,
-              let line = message["line"] as? String, !line.isEmpty else { return }
-        // A progress line never covers a stuck one still being read.
-        if let current = notice, current.attention, event == "progress" { return }
-        let next = Notice(
-            sessionId: sessionId,
-            project: message["project"] as? String ?? "",
-            line: line,
-            attention: event == "stuck"
-        )
+        guard let raw = message["event"] as? String, let kind = Notice.Kind(rawValue: raw),
+              let sessionId = message["sessionId"] as? String else { return }
+        if kind == .done, !(expanded && sessionId == target?.id) { unread.insert(sessionId) }
+        if voice, sessionId == focused { return }
+        let project = message["project"] as? String ?? ""
+        let line: String
+        switch kind {
+        case .done:
+            guard message["long"] as? Bool ?? false else { return }
+            let said = message["line"] as? String ?? ""
+            line = said.isEmpty
+                ? Notice.doneLine(project: project, seconds: message["seconds"] as? Int ?? 0)
+                : "Done: \(said)"
+        case .progress, .stuck:
+            line = message["line"] as? String ?? ""
+        }
+        guard !line.isEmpty else { return }
+        // Nothing covers a stuck agent's line while it's still being read.
+        if let current = notice, current.attention, kind != .stuck { return }
+        let next = Notice(sessionId: sessionId, project: project, line: line, kind: kind)
         notice = next
+        if kind != .progress { chime(kind == .done ? .done : .attention) }
         noticeTimer?.cancel()
         noticeTimer = Task { @MainActor [weak self] in
             try? await Task.sleep(for: next.lifetime)
@@ -281,6 +436,19 @@ final class AgentState: ObservableObject {
             self?.notice = nil
             self?.settle()
         }
+    }
+
+    enum Chime: String {
+        case done = "Glass", attention = "Ping"
+    }
+
+    /// Voice speaks news out loud; typing only, a system sound stands in for it.
+    /// Set `sounds` in settings.json to turn it on or off either way.
+    var play: (Chime) -> Void = { NSSound(named: NSSound.Name($0.rawValue))?.play() }
+    private var approvalsLoaded = false
+    private func chime(_ sound: Chime) {
+        guard !hidden, !claudeInFront, Settings.sounds(voice: voice) else { return }
+        play(sound)
     }
 
     func dismissNotice() {
@@ -294,22 +462,38 @@ final class AgentState: ObservableObject {
         if let agent = agents.first(where: { $0.id == notice.sessionId }) { jump(to: agent) }
     }
 
-    func interrupt() { client?.send(["type": "interrupt"]) }
+    func interrupt() {
+        if let target, target.hosted {
+            fleet?.send(["type": "interrupt", "id": target.id])
+        } else {
+            client?.send(["type": "interrupt"])
+        }
+    }
     func focus(_ id: String) {
         focused = id
+        unread.remove(id)
         client?.send(["type": "focus", "id": id])
+        refreshChat()
+    }
+
+    /// Ask the daemon for the target's conversation; the reply lands as `chat`.
+    func refreshChat() {
+        chatAsked = Date()
+        guard let id = target?.id else {
+            chat = []
+            chatFor = nil
+            return
+        }
+        if chatFor != id { chat = [] }
+        fleet?.send(["type": "chat", "id": id])
     }
     /// The agents daemon dropped: empty the roster rather than show a frozen one.
     func clearRoster() {
+        approvalsLoaded = false
         agents = []
         approvals = []
         rosterDegraded = false
         rosterConnected = false
-        fleetTotals = nil
-    }
-
-    func show(_ mode: PanelMode) {
-        panel = mode
     }
 
     /// Start Claude Code in a directory of your choosing, hosted by the agents
@@ -317,18 +501,57 @@ final class AgentState: ObservableObject {
     func startAgent(in cwd: String) {
         fleet?.send(["type": "spawn", "cwd": cwd])
     }
+
+    /// Open the inline path field for a new hosted agent (+ in the session row).
+    func requestNewAgent() {
+        takeKeyboard()
+        addingAgent = true
+        composing = true
+        newAgentRequest += 1
+    }
+
+    /// What's typed in the path field: started, or why not.
+    func submitNewAgent(_ typed: String) -> String? {
+        let path = AgentPath.resolve(typed)
+        guard AgentPath.isDirectory(path) else { return "no folder at \(path)" }
+        guard rosterConnected else { return "the agents daemon isn't running" }
+        startAgent(in: path)
+        addingAgent = false
+        return nil
+    }
+
+    func cancelNewAgent() {
+        addingAgent = false
+    }
     func setTalking(_ down: Bool) {
         micOpen = down
         client?.send(["type": "ptt", "down": down])
     }
+    /// A choice for one of Claude's questions: each question's text, then the
+    /// label picked, or the labels when it takes several.
+    func choose(_ request: ApprovalRequest, answers: [String: Any]) {
+        fleet?.send(["type": "approve", "id": request.id, "approved": true, "always": false,
+                     "how": "from the notch", "answers": answers])
+        approvals.removeAll { $0.id == request.id }
+    }
+
     func answer(_ request: ApprovalRequest, approved: Bool, always: Bool = false) {
+        // A question only takes a choice; a yes would leave it waiting.
+        if approved, !request.questions.isEmpty { return }
         fleet?.send(["type": "approve", "id": request.id, "approved": approved, "always": always, "how": "from the notch"])
         // The daemon's next snapshot confirms it; don't leave the card up meanwhile.
         approvals.removeAll { $0.id == request.id }
     }
 
+    /// Neither yes nor no yet: the daemon works out what the call means and
+    /// puts it on the card, with the question still open.
+    func explain(_ request: ApprovalRequest) {
+        fleet?.send(["type": "explain", "id": request.id])
+    }
+
     func snoozeApprovals() {
         snoozed.formUnion(approvals.map(\.id))
+        snoozedCards.formUnion(cards.filter(\.isAsk).map(\.id))
     }
 
     func jump(to request: ApprovalRequest) {
@@ -336,7 +559,9 @@ final class AgentState: ObservableObject {
     }
 
     func jump(to agent: RemoteAgent) {
-        if agent.hosted {
+        if agent.desktop, let url = URL(string: agent.link) {
+            NSWorkspace.shared.open(url)
+        } else if agent.hosted {
             TerminalWindow.shared.show(session: agent.id)
         } else {
             Jump.to(host: agent.host, tty: agent.tty)
@@ -351,5 +576,63 @@ final class AgentState: ObservableObject {
             client?.send(["type": "interrupt", "id": agent.id])
         }
     }
-    func send(text: String) { client?.send(["type": "text", "text": text]) }
+    /// A typed line. Any session on the roster gets it through the agents
+    /// daemon: typed into a hosted one's prompt, or over a terminal one's peer
+    /// socket once it's idle. `steer` cuts a hosted one's turn short first.
+    /// Only the voice agent's own session goes to the voice backend.
+    func send(text: String, steer: Bool = false) {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if let target {
+            typedTarget = target.id
+            fleet?.send(["type": "type", "id": target.id, "text": text, "steer": steer])
+            showTyped("sending", detail: "")
+        } else if voice {
+            client?.send(["type": "text", "text": text])
+        }
+    }
+
+    /// The notch never activates the app, so a field in it only gets keys
+    /// once its window is made key by hand.
+    func takeKeyboard() {
+        NSApp?.windows.first { $0 is NotchWindow }?.makeKey()
+    }
+
+    /// Back to the app you were in, once a card is done with the keyboard.
+    func returnKeyboard() {
+        guard NSApp?.windows.first(where: { $0 is NotchWindow })?.isKeyWindow == true,
+              let app = NSWorkspace.shared.frontmostApplication, app != .current else { return }
+        app.activate()
+    }
+
+    func requestCompose() {
+        takeKeyboard()
+        composing = true
+        composeRequest += 1
+    }
+
+    func endCompose() {
+        composing = false
+        composeDismiss += 1
+    }
+
+    private func showTyped(_ status: String, detail: String) {
+        let name = targetName
+        switch status {
+        case "sending": typedStatus = "→ \(name)"
+        case "sent": typedStatus = "sent to \(name)"
+        case "steered": typedStatus = "steered \(name)"
+        case "queued": typedStatus = "\(name) is busy — it gets this when it's free"
+        case "waiting": typedStatus = "\(name) is waiting on a permission question — answer that first"
+        case "gone": typedStatus = "\(name) isn't running any more"
+        default: typedStatus = detail.isEmpty ? "couldn't reach \(name)" : "couldn't reach \(name): \(detail)"
+        }
+        typedTimer?.cancel()
+        guard status != "sending" else { return }
+        typedTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(6))
+            guard !Task.isCancelled else { return }
+            self?.typedStatus = ""
+        }
+    }
 }

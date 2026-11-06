@@ -5,6 +5,9 @@ import Foundation
 ///
 /// run.sh points `NOTCH_SETTINGS` at it; without that, the working directory.
 enum Settings {
+    /// Posted after the settings window writes a change.
+    static let changed = Notification.Name("NotchSettingsChanged")
+
     static var url: URL {
         if let path = ProcessInfo.processInfo.environment["NOTCH_SETTINGS"], !path.isEmpty {
             return URL(fileURLWithPath: path)
@@ -20,15 +23,72 @@ enum Settings {
         return object
     }
 
+    /// Writes one key, keeping whatever else is in the file.
+    static func set(_ key: String, _ value: Any) {
+        var object = load()
+        object[key] = value
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        ) else { return }
+        try? data.write(to: url, options: .atomic)
+        NotificationCenter.default.post(name: changed, object: nil)
+    }
+
+    /// Voice in and out. Paused for now, so off unless settings.json turns it
+    /// on. Off, the notch is typed to, and run.sh doesn't start the voice
+    /// backend at all, which is what lets it run without Apple Silicon or the
+    /// speech models. Read once at launch.
+    static var voice: Bool {
+        (load()["voice"] as? Bool) ?? false
+    }
+
+    /// A system sound for a new question, a stuck agent or a long turn
+    /// finishing. On by default only when there's no voice to say so.
+    static func sounds(voice: Bool) -> Bool {
+        (load()["sounds"] as? Bool) ?? !voice
+    }
+
+    /// The push-to-talk key. `PTT_KEY` in the environment still wins.
+    static var talkKey: String {
+        (load()["talk_key"] as? String) ?? ""
+    }
+
+    /// Starting agents from the notch, and the terminal window they run in.
+    /// Off by default: the notch watches the sessions you already run.
+    static var hostedAgents: Bool {
+        (load()["hosted_agents"] as? Bool) ?? false
+    }
+
+    /// Keep the notch up only while the Claude desktop app is open.
+    static var followClaudeApp: Bool {
+        (load()["follow_claude_app"] as? Bool) ?? true
+    }
+
     /// Where "New agent…" starts you off. Home if it isn't set.
     static var defaultAgentPath: String {
         (load()["default_agent_path"] as? String) ?? "~"
     }
 
     /// Seconds of quiet before the pill folds into the notch. 0 keeps it up.
+    static var foldAfterSeconds: Double {
+        (load()["notch_fold_after"] as? NSNumber)?.doubleValue ?? 300
+    }
+
     static var foldAfter: TimeInterval {
-        let seconds = (load()["notch_fold_after"] as? NSNumber)?.doubleValue ?? 300
-        return seconds <= 0 ? .infinity : seconds
+        foldAfterSeconds <= 0 ? .infinity : foldAfterSeconds
+    }
+}
+
+/// The secret the Python side's sockets ask for (backend/auth.py), which it
+/// makes when it starts. Read on every connect, since it may not exist yet.
+enum BridgeToken {
+    static var read: String {
+        let env = ProcessInfo.processInfo.environment["NOTCH_TOKEN_FILE"] ?? ""
+        let path = env.isEmpty
+            ? NSHomeDirectory() + "/Library/Application Support/notch-agent/bridge-token"
+            : env
+        return ((try? String(contentsOfFile: path, encoding: .utf8)) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
