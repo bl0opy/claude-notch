@@ -434,6 +434,19 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(MarkdownBlock.parse("```swift\nlet a\n```"), [.code("let a")])
     }
 
+    func testAFailedConnectionRetriesOnceNotTwice() async throws {
+        // Nothing listens here. Doubling would be 7+ drops by now; backing off
+        // from 0.5s, one chain of retries manages about 3.
+        let client = BridgeClient(url: URL(string: "ws://127.0.0.1:18999")!)
+        var drops = 0
+        client.onConnectionChange = { connected in if !connected { drops += 1 } }
+        client.connect()
+        try await Task.sleep(for: .seconds(2.6))
+        client.disconnect()
+        XCTAssertGreaterThanOrEqual(drops, 2)
+        XCTAssertLessThanOrEqual(drops, 4)
+    }
+
     func testHostedAgentsAreOffUnlessAskedFor() {
         let (off, _, _) = makeState(["voice": false])
         XCTAssertFalse(off.hostedAgents)
