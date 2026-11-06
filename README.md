@@ -1,4 +1,4 @@
-# voice-agent
+# claude-notch
 
 A companion for Claude Code that lives in the MacBook notch. It watches every
 Claude Code session on your Mac, the desktop app's included, and brings what
@@ -123,7 +123,7 @@ sequenceDiagram
 ## Install
 
 ```bash
-git clone https://github.com/bl0opy/voice-agent.git && cd voice-agent
+git clone https://github.com/bl0opy/claude-notch.git && cd claude-notch
 scripts/install.sh
 ```
 
