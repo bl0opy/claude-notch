@@ -112,43 +112,44 @@ sequenceDiagram
 
 ## Requirements
 
-- macOS 14+.
-- Python 3.11 (pyenv 3.11.6 is what it's built on).
-- Swift 5.9+ / Xcode command line tools, to build the shell.
-- [Claude Code](https://code.claude.com) on PATH and logged in.
-- For voice only: Apple Silicon (parakeet-mlx is MLX-only; set
-  `STT_BACKEND=deepgram` elsewhere) and about 1.6 GB of disk for the speech
-  models, downloaded on first run.
+- macOS 14+, on a MacBook with a notch (it works without one, as a pill at the
+  top of the screen).
+- [Claude Code](https://code.claude.com) on PATH and logged in. The Claude
+  desktop app is optional: its Code tabs run Claude Code, so the notch sees them
+  the same way.
+- Python 3.11+ (pyenv 3.11.6 is what it's built on).
+- Xcode command line tools, to build the notch (`xcode-select --install`).
 
 ## Install
 
 ```bash
 git clone https://github.com/bl0opy/voice-agent.git && cd voice-agent
-pyenv local 3.11.6 && python -m venv .venv
-.venv/bin/pip install -r requirements-voice.txt    # voice and typing
+scripts/install.sh
 ```
 
-Typing only — no mic, no speech models, any Mac:
+There's nothing to install inside the Claude app. The notch hooks into Claude
+Code, which every session runs, whether it's in a terminal, an editor or a Code
+tab in the app. `install.sh` sets up four things, each also a script of its own:
 
-```bash
-.venv/bin/pip install -r requirements.txt
-echo '{ "voice": false }' > settings.json
-```
+| Script | What it does | Undo |
+|---|---|---|
+| `install-hooks.sh` | Adds the notch's hook to `~/.claude/settings.json`, so every session's permission questions also come to the notch, and keeps the notch's token out of the sandbox | `install-hooks.sh --uninstall` |
+| `install-agentsd.sh` | Runs the agents daemon at login: it watches the sessions and holds the questions | `launchctl bootout gui/$(id -u)/com.notchagent.agentsd` |
+| `install-notch.sh` | Builds the notch and runs it at login, showing while the Claude app is open. Installs the daemon if it isn't yet | `launchctl bootout gui/$(id -u)/com.notchagent.notch` |
+| `install-mcp.sh` | Gives every session `notch_ask` and `notch_show`, and allows them without a prompt | `install-mcp.sh --uninstall` |
 
-That's everything. Then, optionally:
-
-```bash
-scripts/install-hooks.sh     # answer every session's permission prompts from the notch
-scripts/install-agentsd.sh   # run the agents daemon at login (launchd)
-scripts/install-notch.sh     # run the notch at login too; it shows while the Claude app is open
-scripts/install-mcp.sh       # give every session notch_ask and notch_show
-```
+Sessions already open pick up the hook straight away, and the two tools when
+they restart. Read [Security](#security) first: the hook sees every session's
+permission questions.
 
 **Permissions.** System Settings → Privacy & Security → **Accessibility**: allow
-whichever app launches the notch (Terminal, if you use `./run.sh`). Push-to-talk,
-⌥Space and ⌃⌥T / Y / N / J all need it. macOS asks for **Automation** the first time
-↗ selects a tab in Terminal or iTerm2, and for the **Microphone** the first time
-the backend opens it.
+NotchAgent for ⌃⌥T and ⌃⌥Y / N / J. If you cloned into Documents, macOS also
+asks for python3 and NotchAgent to read it; allow both, or the daemon waits on
+the prompt.
+
+**Voice** is paused, but still here: `.venv/bin/pip install -r
+requirements-voice.txt`, set `"voice": true` in `settings.json`, and use
+`./run.sh`. It needs Apple Silicon and about 1.6 GB for the speech models.
 
 ## Run
 
