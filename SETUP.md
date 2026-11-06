@@ -73,7 +73,7 @@ there's nothing for the notch to show. To see cards, start a session that asks:
 claude --permission-mode default     # or shift+tab in a running session
 ```
 
-Agents started from the notch's **+ agent** run `claude -p` in auto mode. For
+Agents the voice agent starts run `claude -p` in auto mode. For
 those, the hook asks about the risky ones only: `rm -rf`, `git push`, package
 installs, writes outside the project, `WebFetch`. With no daemon running, those
 are denied.
@@ -97,7 +97,7 @@ Start `./run.sh`, then open a Terminal tab in any repo and run
 | 10 | ⌃⌥J or ↗ | That Terminal tab comes forward |
 | 11 | "go to <project>", then "back" | Mic moves, then returns to the voice agent |
 | 12 | A 30s+ job in a session you aren't focused on | "<project> is done." and a "done after …" line in the notch (a sound instead of the voice with voice off) |
-| 14 | + agent, type a bare repo name, tab, ↩ | Suggestions under the field, then the terminal window opens on the new agent |
+| 14 | With hosted agents on: +, type a bare repo name, tab, ↩ | Suggestions under the field, then the terminal window opens on the new agent |
 | 15 | ⌃⌥T from another app, type a line, ↩, esc | The line reaches the focused agent; the keyboard goes back to the app you were in |
 | 13 | Quit `./run.sh`, trigger a prompt | Plain Claude Code behaviour, no delay |
 
@@ -109,7 +109,7 @@ Automated checks, no audio or API keys needed:
 .venv/bin/python scripts/fleet_smoke.py      # voice answers questions end to end
 .venv/bin/python scripts/turns_smoke.py      # end-of-turn from the roster and the hook
 .venv/bin/python scripts/type_smoke.py       # typing to a session with no voice backend
-(cd shell/NotchAgent && swift test)          # the notch: cards, notices, modes, typing, + agent
+(cd shell/NotchAgent && swift test)          # the notch: cards, notices, modes, typing, sessions
 ```
 
 ## Troubleshooting
@@ -117,7 +117,7 @@ Automated checks, no audio or API keys needed:
 | Symptom | Check |
 |---|---|
 | No card | Is the session in auto mode? Is the daemon up (`lsof -iTCP:8766`)? Is the hook installed (`grep notch_hook ~/.claude/settings.json`)? |
-| "agents daemon offline" in the dashboard | Nothing on :8767. Start `./run.sh` or `scripts/install-agentsd.sh` |
+| "agents daemon offline" in the panel | Nothing on :8767. Start `./run.sh` or `scripts/install-agentsd.sh` |
 | `run.sh`: port 8765 taken | A backend is still running. `lsof -iTCP:8765`, then kill it |
 | Hotkeys or push-to-talk do nothing | Accessibility permission for the launching app |
 | Swift build error mentioning "module cache path" | The repo moved. `run.sh` fixes it; by hand, `rm -rf shell/NotchAgent/.build` |

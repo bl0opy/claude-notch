@@ -31,26 +31,25 @@ finishes; and replies you can type straight from the notch.
 
 ## What it does
 
-- **Talk to Claude Code.** Hold right ⌥, speak, let go. The answer is spoken
-  back (the first two sentences) and shown in full in the notch.
-- **Steer it mid-turn.** Talking again while it's working interrupts and
-  redirects it, the way typing at Claude Code mid-turn does.
-- **Or just type.** ⌃⌥T from any app opens a line in the notch: message any
-  session, or steer one mid-turn with ⌘↩. Voice is optional — turn it off in
-  Settings and it runs anywhere Claude Code does on a Mac, no speech models.
-- **See every session.** Every `claude` process on the machine, terminal or
-  not: project, branch, what it's doing, tokens spent, worst state first.
-- **Answer every permission prompt from one place.** Click, press ⌃⌥Y, or say
-  "approve orbit". The terminal's own dialog closes when you do.
-- **Start agents anywhere, no terminal windows.** `+ agent` takes a path and
-  starts the real interactive Claude Code there, in a pty the agents daemon
-  owns, drawn in one window with every other session it hosts. Type to it
-  there, talk to it through the notch, interrupt it from either.
-- **Keep an eye on the ones you aren't talking to.** A supervisor watches
-  every working agent, says how long turns are going, and tells you out loud
-  and in the notch when one looks stuck, and why.
-- **Stay out of the way.** The notch folds into the hardware notch when nothing
-  is happening and opens by itself when something needs you.
+- **Answer permission questions from the notch.** A question from any session
+  drops down by itself with the command, what the agent said about why, and
+  allow, always (showing the exact rule it adds), deny, or open in the app. The
+  session's own dialog closes when you answer. **why?** asks Haiku to explain
+  what the call does while the question stays open.
+- **Answer Claude's multiple-choice questions** the same way, with a button per
+  option.
+- **See every session's conversation.** Sessions sit in a sidebar, grouped by
+  what needs you first, with the desktop app's own titles. Pick one to read its
+  chat so far, rendered as markdown.
+- **Reply from the notch.** ⌃⌥T from any app, or the line under the chat. A
+  reply reaches a session as a message from another session, not as you, so it
+  can't approve anything on your behalf.
+- **Know when a long turn ends**, with the first line of what it said.
+- **Let sessions show and ask things.** `notch_ask` puts a small form in the
+  notch and waits for your answers; `notch_show` puts up progress, a table or a
+  diff.
+- **Stay out of the way.** Folded while you're in the Claude app, hidden while
+  it isn't running, on the MacBook's display whatever else is plugged in.
 
 ## How it fits together
 
@@ -202,7 +201,7 @@ Other keys, from any app:
 | ⌃⌥Y / ⌃⌥N | Allow / deny the oldest permission question |
 | ⌃⌥J | Bring the terminal that question came from to the front |
 
-Pick a different talk key in ◎ → Settings…, or with `PTT_KEY` in the
+Pick a different talk key in Settings (right-click the notch), or with `PTT_KEY` in the
 environment `run.sh` starts from: `rightOption` (default), `rightCommand`,
 `fn`, `leftOption`, `command`. `command` has to be held alone for 200 ms and any
 other key cancels it, since ⌘ is half of every shortcut. `PUSH_TO_TALK=0` gives
@@ -210,7 +209,7 @@ the old always-on mic.
 
 ### Typing to it
 
-⌃⌥T from any app, or a click on the line at the bottom of the focus tab, and
+⌃⌥T from any app, or a click on the line under the chat, and
 type. The notch holds the keyboard until you press esc, then hands it back to
 the app you were in.
 
@@ -220,15 +219,13 @@ the app you were in.
 - **⌘↩** steers: a hosted session's turn is cut short first, then the line goes
   in its place — the same as talking over it.
 
-It goes to the agent you last clicked on the agents tab. With voice on and
-nothing picked, it goes to the voice agent; typing only, to the first hosted
-session. Under the field it says what happened: sent, held until it's free,
+It goes to the session open in the panel. Under the field it says what happened: sent, held until it's free,
 or waiting on a permission question you have to answer first.
 
 With `"voice": false`, that's the whole input: `run.sh` doesn't start the
 voice backend, there's no mic and no speech models, and nothing needs Apple
 Silicon. Everything else — the roster, approval cards, the supervisor's lines
-in the notch, the terminal window — works the same.
+in the notch — works the same.
 
 ### The notch
 
@@ -247,66 +244,35 @@ falling asleep (grey, the odd z) after 45 s of quiet.
 
 ## Every agent, in the notch
 
-The panel has two tabs. **focus** is the agent you're talking to: what you said,
-what it said, what it's doing. **agents** is the dashboard: every Claude Code
-session on the machine, worst state first, so one blocked on a permission prompt
-sits at the top.
+Hover the notch and it opens into the panel: sessions down the left, the one
+you picked on the right. The sidebar groups them by what wants you: **needs
+you** (a question, or something the app says it needs), **finished** (a turn you
+haven't looked at since it ended, with a green dot), **working**, then **idle**.
+Each time the panel opens it starts on whatever needs you most, and while it's
+open it stays on the session you're reading, so a reply can't go to one that
+just became urgent.
 
-Click a row to focus it. The focused agent is the one that hears the mic and the
-only one that speaks; everything else works silently and gets a one-line
-interjection when it asks for something or finishes a long turn. Hover a row for
-**↗** (bring its terminal forward, or open it in the terminal window if the
-daemon hosts it) and **■** (interrupt it, for hosted agents and the notch's own).
+The right side is that session's conversation, read from its transcript every
+couple of seconds while the panel is open: what you said, what Claude said, and a
+dim line per tool call. For a Code tab in the Claude app, the line above it shows
+the app's summary of the last turn, and **open in app ↗** jumps to it.
 
-Above the roster is one line for the whole machine: how many sessions, tokens
-spent between them, what that would cost at API rates, and which context window
-is closest to full. Windows don't add up (five sessions don't share one), so
-what's shown is the fullest, turning amber past three quarters, which is what
-predicts a compaction. A subscription isn't billed per token, so the dollars are
-for comparing sessions, not a bill.
+### Starting agents from the notch (optional)
 
-### Starting an agent
-
-**+ agent** on the agents tab (or *New agent…* in the menu bar item) opens a
-path field right there in the notch, and the agents daemon starts `claude` in
-a pty of its own. The terminal window opens on it: the full Claude Code
-interface, typed into as usual, with no Terminal.app window behind it.
+Off by default: the notch watches the sessions you already run. Turn on "start
+agents from the notch" in Settings (`"hosted_agents": true`) and a **+** in the
+sidebar opens a path field, and the agents daemon starts the real interactive
+`claude` in a pty of its own, drawn in a terminal window of the notch's.
 
 The field starts with `default_agent_path` from `settings.json`, and the
-folders that finish what you've typed sit under it — click one, or tab for the
-first. A bare name like `bus-tracker` is taken relative to the default; `~` and
-absolute paths work too. ↩ starts it; a path that isn't a folder says so in
-place; esc closes it.
-
-```json
-{ "default_agent_path": "~/code" }
-```
-
-The terminal window's path box uses the same setting: `bus-tracker` there starts
-in `<default_agent_path>/bus-tracker`.
+folders that finish what you've typed sit under it: click one, or tab for the
+first. A bare name like `bus-tracker` is taken relative to the default. The
+sessions belong to the daemon, not the window, and **resume** brings one back
+with `claude --resume` after a restart. A pty socket is a keyboard on a live
+session, so the daemon wants its token and its own page's `Origin` on every one.
 
 `settings.json` is yours and gitignored; `run.sh` copies it from
-`settings.example.json` the first time. It's read each time you open the field,
-so edits apply without a restart.
-
-### The terminal window
-
-*Terminal window* in the menu bar item, or ↗ on a hosted row, opens it: a list
-of hosted sessions on the left with each one's spend and context, the machine's
-totals above, and the selected session's terminal on the right. The page is
-served by the daemon on `http://127.0.0.1:8768` and works in a browser too.
-
-The sessions belong to the daemon, not the window: closing the window leaves
-them running. Each is started with a known session id, so after the daemon
-restarts they're still listed and **resume** brings one back with
-`claude --resume`. Under launchd (`install-agentsd.sh`) they outlive `run.sh`.
-
-A spoken turn for a hosted session is typed into its prompt; talking over it
-mid-turn presses Esc first, the way you would. While it's showing a permission
-dialog nothing is typed, since the keys would answer it.
-
-A pty socket is a keyboard on a live session, so the daemon refuses any browser
-page but its own (an `Origin` check on every socket).
+`settings.example.json` the first time.
 
 ### Hosted, owned and terminal agents
 
@@ -494,7 +460,7 @@ installed, the backend falls back to Deepgram on its own.
 
 Two files, both optional and both gitignored:
 
-- **`settings.json`** — the notch's settings, edited in ◎ → Settings… (⌘,) or
+- **`settings.json`** — the notch's settings, edited in Settings (right-click the notch) or
   by hand:
 
   | Key | Default | |
@@ -731,11 +697,11 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | **`hooks/`** | |
 | `hooks/notch_hook.py` | The one hook: PermissionRequest, PreToolUse (owned agents), Stop |
 | **`shell/NotchAgent/`** | **SwiftUI app (SPM executable)** |
-| `.../NotchView.swift` | The panel: focus and agents tabs, cards, roster |
+| `.../NotchView.swift` | The panel: the session sidebar, chat, question cards |
 | `.../PushToTalk.swift` | Global key watcher: right ⌥ opens the mic |
-| `.../AgentPath.swift` | Resolves and completes the `+ agent` path |
+| `.../AgentPath.swift` | Resolves and completes the path for a hosted agent |
 | `.../Settings.swift` | Reads and writes `settings.json`; the ports |
-| `.../SettingsWindow.swift` | ◎ → Settings… |
+| `.../SettingsWindow.swift` | Settings, from the notch's right-click menu |
 | `.../Jump.swift` | Brings a session's terminal to the front |
 | `.../TerminalWindow.swift` | Native window around the terminal page |
 | **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
