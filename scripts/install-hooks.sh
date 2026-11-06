@@ -56,6 +56,23 @@ for event in wanted:
 if not hooks:
     settings.pop("hooks")
 
+# The notch's sockets take a token from this file. A command running in Claude
+# Code's sandbox can read most of your home folder, and with this file it could
+# answer its own permission questions, so the sandbox is told not to.
+token = "~/Library/Application Support/notch-agent/bridge-token"
+filesystem = settings.setdefault("sandbox", {}).setdefault("filesystem", {})
+deny = [p for p in filesystem.get("denyRead", []) if p != token]
+if mode == "install":
+    deny.append(token)
+if deny:
+    filesystem["denyRead"] = deny
+else:
+    filesystem.pop("denyRead", None)
+if not filesystem:
+    settings["sandbox"].pop("filesystem")
+if not settings["sandbox"]:
+    settings.pop("sandbox")
+
 with open(settings_path, "w", encoding="utf-8") as f:
     json.dump(settings, f, indent=2, ensure_ascii=False)
     f.write("\n")

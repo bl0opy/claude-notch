@@ -742,6 +742,38 @@ call, one line back: `{"decision": "allow|deny|none", "reason": "...", "permissi
 | **`scripts/`** | Installers, mocks and smoke tests (see [Development](#development)) |
 | `service/` | launchd plist for the agents daemon |
 
+## Security
+
+The notch can answer Claude Code's permission questions, so read this before you
+install it.
+
+- **It sees every session's permission questions.** `scripts/install-hooks.sh`
+  adds a `PermissionRequest` hook to `~/.claude/settings.json`, which applies to
+  every Claude Code session on your Mac, the desktop app's included. With the
+  agents daemon down the hook does nothing, and each session asks as it would
+  have anyway. `--uninstall` takes it out.
+- **Its sockets take a token.** The daemon listens on localhost only, but any
+  process on your Mac can reach localhost, a sandboxed command an agent ran
+  without asking included. So every connection must show the token in
+  `~/Library/Application Support/notch-agent/bridge-token`, a file only you can
+  read. `install-hooks.sh` also adds that file to
+  `sandbox.filesystem.denyRead`, since Claude Code's sandbox otherwise lets a
+  command read most of your home folder. Without that, a sandboxed command could
+  read the token and answer its own permission questions. Check it's there if
+  you manage that file by hand.
+- **Sessions can't do more through it.** A message typed in the notch reaches a
+  session as one "from another Claude session", which Claude won't treat as you
+  approving anything. A card a session puts up with `notch_ask` or `notch_show`
+  is one of a fixed set of shapes, not interface code, and its answer goes back
+  only to that session.
+- **"Why?" sends a little to Haiku.** Asking why on a question hands the command
+  and the last few lines of that conversation to Haiku through your own
+  `claude`, with no tools, and shows what it says. It's a second opinion, not a
+  safety check.
+- **It reads Claude Code's internals.** The session registry, transcripts, peer
+  key files and the desktop app's session files aren't documented or promised
+  to stay the same. An update can break parts of the notch; it's experimental.
+
 ## License
 
 [MIT](LICENSE).
