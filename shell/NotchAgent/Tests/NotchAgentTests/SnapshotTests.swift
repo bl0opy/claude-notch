@@ -140,7 +140,7 @@ final class SnapshotTests: XCTestCase {
                 ["name": "cache", "label": "Cache size (MB)", "type": "number", "min": 0, "max": 500, "step": 10, "default": 120],
                 ["name": "draco", "label": "Draco compression", "type": "toggle", "default": true],
             ]],
-            ["id": "c2", "kind": "show", "project": "Presently", "title": "Uploading to TestFlight", "progress": 0.6,
+            ["id": "c2", "kind": "show", "project": "Tally", "title": "Uploading to TestFlight", "progress": 0.6,
              "body": "```diff\n- version 1.4.3\n+ version 1.5.0\n```"],
         ]])
         try render("11-cards", state)
@@ -149,13 +149,13 @@ final class SnapshotTests: XCTestCase {
     func testDesktopSessionPanel() throws {
         let (state, _, _) = makeState(["voice": false])
         state.apply(["type": "agents", "list": [
-            desktopRow("presently", state: "idle", title: "TestFlight update", summary: "added the 1.5.0 notes; pushed b204d20"),
+            desktopRow("tally", state: "idle", title: "TestFlight update", summary: "added the 1.5.0 notes; pushed b204d20"),
             desktopRow("voice-agent", state: "working", title: "Notch Agent"),
         ]])
-        state.focus("presently")
-        state.apply(["type": "chat", "id": "presently", "rows": [
+        state.focus("tally")
+        state.apply(["type": "chat", "id": "tally", "rows": [
             ["role": "you", "text": "add the what's new notes and push"],
-            ["role": "tool", "text": "Edit(Presently/WhatsNew.swift)"],
+            ["role": "tool", "text": "Edit(Tally/WhatsNew.swift)"],
             ["role": "tool", "text": "Bash(git push origin main)"],
             ["role": "claude", "text": "Added the 1.5.0 entry and pushed b204d20."],
         ]])

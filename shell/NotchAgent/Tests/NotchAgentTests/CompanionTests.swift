@@ -105,11 +105,11 @@ final class CompanionTests: XCTestCase {
 
     func testADesktopSessionIsCalledByItsTitleAndSaysWhatItLastDid() {
         let (state, _, _) = makeState(["voice": false])
-        state.apply(["type": "agents", "list": [desktopRow("s1", title: "Fix the heart button", summary: "pushed b204d20")]])
+        state.apply(["type": "agents", "list": [desktopRow("s1", title: "Fix the streak counter", summary: "pushed b204d20")]])
         let agent = state.agents[0]
         XCTAssertTrue(agent.desktop)
         XCTAssertTrue(agent.canJump)
-        XCTAssertEqual(agent.label, "Fix the heart button")
+        XCTAssertEqual(agent.label, "Fix the streak counter")
         XCTAssertEqual(agent.subtitle, "pushed b204d20")
         XCTAssertFalse(state.canInterrupt, "a session in the app can't be stopped from here")
     }

@@ -53,7 +53,7 @@ def say(text: str, path: Path) -> bytes:
 
 
 async def main():
-    names = ["orbit", "descant-ide", "bus-tracker", "voice-agent", "wound-stage"]
+    names = ["orbit", "descant-ide", "bus-tracker", "voice-agent", "pose-lab"]
     stt = ParakeetSTTService(
         model="mlx-community/parakeet-tdt-0.6b-v3",
         vocabulary=FixedVocabulary(names),

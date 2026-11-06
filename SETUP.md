@@ -89,7 +89,7 @@ Start `./run.sh`, then open a Terminal tab in any repo and run
 | 2 | Click **allow** | Terminal prompt closes, command runs |
 | 3 | Trigger again, press ⌃⌥Y from any app | Same as 2 |
 | 4 | Trigger again, answer in the terminal | Card disappears within about 1s |
-| 5 | Trigger again, hold right ⌥, say "yes" | "Allowed wound-stage." |
+| 5 | Trigger again, hold right ⌥, say "yes" | "Allowed pose-lab." |
 | 6 | Ask for `git push --dry-run`, say "yes" | Refused: "say approve <project>" |
 | 7 | Say "approve <project>" | Allowed |
 | 8 | Prompts pending in two repos, say "what's waiting" | One sentence naming both |

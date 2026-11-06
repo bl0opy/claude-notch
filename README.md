@@ -339,7 +339,7 @@ It says something in two cases, out loud and as a popup under the notch's pill
 (click it to open that agent):
 
 - **Progress**, on a long turn: after 3 minutes and every 5 after.
-  *"wound-stage, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring
+  *"pose-lab, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring
   the eval loop into the CLI."*
 - **Stuck**, the moment one looks it. Judged by rule, no model:
 
@@ -355,7 +355,7 @@ It says something in two cases, out loud and as a popup under the notch's pill
   through your own `claude`: no tools, no settings, no MCP, no session saved, run
   in an empty folder, with the agent's recent calls and errors as its only input.
   No API key; it counts against your plan like any other call.
-  *"wound-stage looks stuck: it keeps rerunning the same test without fixing the
+  *"pose-lab looks stuck: it keeps rerunning the same test without fixing the
   missing import it trips on."* With `SUPERVISOR_EXPLAIN=off` it says the rule's
   own sentence instead.
 

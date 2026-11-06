@@ -12,19 +12,19 @@ START = time.time()
 
 ROWS = [
     {"id": "a1", "pid": 101, "tty": "", "host": "", "name": "voice-agent-83", "project": "voice-agent",
-     "cwd": "/Users/ayan/Documents/GitHub/voice-agent", "branch": "notch-agent-dashboard",
+     "cwd": "/Users/you/code/voice-agent", "branch": "notch-agent-dashboard",
      "state": "working", "waitingFor": "", "reachable": True, "owned": True,
      "model": "claude-opus-5", "activity": "Grep", "activityDetail": "NotchBridge",
      "subagents": {"total": 2, "active": 1},
      "tokens": {"in": 578, "out": 164927, "cache_read": 19466890, "cache_write": 1093205, "thinking": 46112}},
     {"id": "b2", "pid": 102, "tty": "ttys003", "host": "Terminal", "name": "descant-ide-4", "project": "descant-ide",
-     "cwd": "/Users/ayan/Documents/GitHub/descant-ide", "branch": "fix-auth-flow",
+     "cwd": "/Users/you/code/descant-ide", "branch": "fix-auth-flow",
      "state": "waiting", "waitingFor": "input needed", "reachable": True, "owned": False,
      "model": "claude-sonnet-5", "activity": "Bash", "activityDetail": "pytest -q",
      "subagents": {"total": 0, "active": 0},
      "tokens": {"in": 12, "out": 4210, "cache_read": 220145, "cache_write": 9821, "thinking": 640}},
-    {"id": "c3", "pid": 103, "tty": "", "host": "Code", "name": "wound-stage-1", "project": "wound-stage",
-     "cwd": "/Users/ayan/Documents/GitHub/wound-stage", "branch": "main",
+    {"id": "c3", "pid": 103, "tty": "", "host": "Code", "name": "pose-lab-1", "project": "pose-lab",
+     "cwd": "/Users/you/code/pose-lab", "branch": "main",
      "state": "idle", "waitingFor": "", "reachable": False, "owned": False,
      "model": "claude-sonnet-5", "activity": "Read", "activityDetail": "train.py",
      "subagents": {"total": 0, "active": 0},
@@ -106,15 +106,15 @@ async def listen(ws):
 
 
 SUPERVISOR_LINES = [
-    {"event": "progress", "sessionId": "c3", "project": "wound-stage", "level": "info",
-     "line": "wound-stage, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring the eval loop into the CLI."},
-    {"event": "stuck", "sessionId": "c3", "project": "wound-stage", "level": "attention", "reason": "failing",
-     "line": "wound-stage looks stuck: it keeps rerunning the same test without fixing the missing import it trips on."},
+    {"event": "progress", "sessionId": "c3", "project": "pose-lab", "level": "info",
+     "line": "pose-lab, 7 minutes in, 12 edits across 4 files, tests passing. Now wiring the eval loop into the CLI."},
+    {"event": "stuck", "sessionId": "c3", "project": "pose-lab", "level": "attention", "reason": "failing",
+     "line": "pose-lab looks stuck: it keeps rerunning the same test without fixing the missing import it trips on."},
 ]
 
 
 NOTIFY_STEPS = [
-    {"type": "fleet_event", "event": "done", "sessionId": "c3", "project": "wound-stage", "long": True, "seconds": 312},
+    {"type": "fleet_event", "event": "done", "sessionId": "c3", "project": "pose-lab", "long": True, "seconds": 312},
     "question",
     {"type": "fleet_event", "event": "stuck", "sessionId": "d4", "project": "multiplayer-piano", "level": "attention",
      "reason": "looping", "speak": True,
