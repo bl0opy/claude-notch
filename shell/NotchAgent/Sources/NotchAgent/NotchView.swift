@@ -74,6 +74,10 @@ struct NotchView: View {
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
                     .padding(.bottom, 16)
+                    // Anywhere but a button opens the panel; the buttons
+                    // take their own clicks first.
+                    .contentShape(Rectangle())
+                    .onTapGesture { state.openPanel() }
                     .frame(width: 480, alignment: .leading)
                     .transition(.island)
             } else if mode == .notice, let notice = state.notice {
@@ -119,6 +123,7 @@ struct NotchView: View {
             if mode != .dormant {
                 HStack(spacing: 6) {
                     StatusDot(phase: state.phase, live: state.micOpen)
+                    SoundToggle(on: state.soundsOn, toggle: state.toggleSounds)
                     if state.waitingOnYou > 0 {
                         PendingBadge(count: state.waitingOnYou)
                             .onTapGesture {
@@ -604,6 +609,24 @@ private struct NoticeLine: View {
         else { return notice.line }
         let rest = String(notice.line.dropFirst(prefix.count))
         return rest.prefix(1).uppercased() + rest.dropFirst()
+    }
+}
+
+/// Sounds on or off, beside the status dot.
+private struct SoundToggle: View {
+    let on: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Image(systemName: on ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(white: on ? 0.7 : 0.38))
+                .frame(width: 16, height: 16)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(on ? "sounds on" : "sounds off")
     }
 }
 

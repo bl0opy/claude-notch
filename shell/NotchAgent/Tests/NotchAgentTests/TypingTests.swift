@@ -158,6 +158,6 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(Settings.defaultAgentPath, "~")
         XCTAssertEqual(Settings.foldAfter, 300)
         XCTAssertFalse(Settings.sounds(voice: true))
-        XCTAssertTrue(Settings.sounds(voice: false))
+        XCTAssertFalse(Settings.sounds(voice: false), "off unless turned on")
     }
 }

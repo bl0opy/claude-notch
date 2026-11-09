@@ -136,7 +136,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         state.claudeInFront = ClaudeApp.frontmost
         appObservers.append(ClaudeApp.observeFrontmost { [weak self] front in self?.state.claudeInFront = front })
         NotificationCenter.default.publisher(for: Settings.changed)
-            .sink { [weak self] _ in self?.applyVisibility() }
+            .sink { [weak self] _ in
+                self?.applyVisibility()
+                self?.state.soundsOn = Settings.sounds(voice: Settings.voice)
+            }
             .store(in: &watchers)
     }
 

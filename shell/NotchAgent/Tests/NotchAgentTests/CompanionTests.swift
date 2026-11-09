@@ -22,11 +22,64 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(state.islandMode, .question, "a new one drops down again")
     }
 
-    func testHoverStillOpensTheWholePanel() {
+    func testHoveringADroppedDownQuestionLeavesItWhereItIs() {
         let (state, _, _) = makeState(["voice": false])
         state.apply(["type": "approvals", "list": [approvalRow("a1")]])
         state.hovering = true
+        XCTAssertEqual(state.islandMode, .question, "the buttons mustn't move under the cursor")
+    }
+
+    func testAClickOffTheButtonsOpensThePanel() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        state.hovering = true
+        state.openPanel()
         XCTAssertEqual(state.islandMode, .expanded)
+        state.hovering = false
+        XCTAssertEqual(state.islandMode, .question, "leaving closes it again")
+    }
+
+    func testAnsweringTheLastQuestionDoesntOpenThePanelUnderTheCursor() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        state.hovering = true
+        state.answer(state.approvals[0], approved: true)
+        XCTAssertNotEqual(state.islandMode, .expanded)
+        state.hovering = false
+        state.hovering = true
+        XCTAssertEqual(state.islandMode, .expanded, "coming back opens it as usual")
+    }
+
+    func testAQuestionArrivingWhileThePanelIsOpenLeavesItOpen() {
+        let (state, _, _) = makeState(["voice": false])
+        state.hovering = true
+        XCTAssertEqual(state.islandMode, .expanded)
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        XCTAssertEqual(state.islandMode, .expanded)
+    }
+
+    func testHoveringAFormIsHeldTooButAPassiveCardIsAQuestionToo() {
+        let (state, _, _) = makeState(["voice": false])
+        state.apply(["type": "cards", "list": [["id": "c", "kind": "show", "title": "Uploading"]]])
+        state.hovering = true
+        XCTAssertEqual(state.islandMode, .question)
+    }
+
+    func testSoundsAreOffUntilTurnedOnFromTheNotch() {
+        let (state, _, _) = makeState(["voice": false, "sounds": false])
+        var played: [AgentState.Chime] = []
+        state.play = { played.append($0) }
+        state.apply(["type": "approvals", "list": []])
+        XCTAssertFalse(state.soundsOn)
+        state.apply(["type": "approvals", "list": [approvalRow("a1")]])
+        XCTAssertTrue(played.isEmpty)
+        state.toggleSounds()
+        XCTAssertTrue(state.soundsOn)
+        XCTAssertTrue(Settings.sounds(voice: false), "and it's saved")
+        state.apply(["type": "approvals", "list": [approvalRow("a1"), approvalRow("a2")]])
+        XCTAssertEqual(played, [.attention])
+        state.toggleSounds()
+        XCTAssertFalse(Settings.sounds(voice: false))
     }
 
     func testAQuestionOutranksANotice() {

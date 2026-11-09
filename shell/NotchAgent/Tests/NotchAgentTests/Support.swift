@@ -40,6 +40,11 @@ func desktopRow(_ id: String, state: String = "idle", title: String = "", summar
 
 @MainActor
 func makeState(_ settings: [String: Any]) -> (AgentState, client: Recorder, fleet: Recorder) {
+    // Sounds are off by default; most tests are about when they'd play.
+    var settings = settings
+    // NSNull leaves it out, to test the default.
+    if settings["sounds"] == nil { settings["sounds"] = true }
+    if settings["sounds"] is NSNull { settings["sounds"] = nil }
     useSettings(settings)
     let state = AgentState()
     let client = Recorder()

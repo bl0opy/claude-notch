@@ -91,9 +91,38 @@ final class AgentState: ObservableObject {
     @Published var hovering: Bool = false {
         didSet {
             // Moving over the lingering panel and away is how you dismiss it.
-            if oldValue && !hovering { lingering = false }
+            if oldValue && !hovering {
+                lingering = false
+                hoverHeld = false
+                clickedOpen = false
+            }
+            // Arriving at a question that dropped down mustn't turn it into the
+            // panel: everything moves, and a click meant for allow lands
+            // somewhere else. It stays as it is until you click it open or
+            // leave and come back.
+            if !oldValue && hovering && hasDropDown { hoverHeld = true }
             settle()
         }
+    }
+    /// Hovering, but held back from opening the panel. See `hovering`.
+    @Published private(set) var hoverHeld = false
+    /// Opened with a click somewhere on a dropped-down card that isn't a button.
+    @Published private(set) var clickedOpen = false
+
+    /// A question or a form showing by itself, under the pill.
+    var hasDropDown: Bool { !unseenApprovals.isEmpty || !unseenCards.isEmpty }
+
+    func openPanel() {
+        clickedOpen = true
+        settle()
+    }
+
+    /// Sounds on, from the speaker in the notch or Settings.
+    @Published var soundsOn = Settings.sounds(voice: Settings.voice)
+
+    func toggleSounds() {
+        soundsOn.toggle()
+        Settings.set("sounds", soundsOn)
     }
     /// True while the push-to-talk key is held — set locally the moment the key goes down, then
     /// confirmed by the backend's own `mic` message.
@@ -202,7 +231,7 @@ final class AgentState: ObservableObject {
     /// The panel is only ever open under the cursor, or while the talk key is
     /// held, and a little after. Work in progress shows as the pill instead, which is enough to see
     /// Claw'd without the panel covering what you're doing.
-    var expanded: Bool { hovering || micOpen || lingering || composing }
+    var expanded: Bool { (hovering && !hoverHeld) || clickedOpen || micOpen || lingering || composing }
 
     /// What the island is showing: folded away, the pill, a notice, a
     /// question, or the panel. A question you haven't hidden outranks a notice.
@@ -447,7 +476,7 @@ final class AgentState: ObservableObject {
     var play: (Chime) -> Void = { NSSound(named: NSSound.Name($0.rawValue))?.play() }
     private var approvalsLoaded = false
     private func chime(_ sound: Chime) {
-        guard !hidden, !claudeInFront, Settings.sounds(voice: voice) else { return }
+        guard !hidden, !claudeInFront, soundsOn else { return }
         play(sound)
     }
 

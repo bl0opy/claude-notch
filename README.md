@@ -376,8 +376,9 @@ counts as a bare answer, so "ok but first rename it" still goes to the agent.
 Out loud you hear "orbit wants to push to git" when a question arrives and
 "orbit is done" when a turn of 30 s or more finishes somewhere you aren't
 focused. The notch shows the same turn ending as a line ("done after 5
-minutes"), and with voice off a system sound stands in for the voice — for new
-questions and stuck agents too (`sounds` in settings.json). A turn's end is
+minutes"), and with voice off a system sound can stand in for the voice — for new
+questions and stuck agents too. Sounds are off until you click the speaker next to
+the notch's status dot (or set `sounds` in settings.json). A turn's end is
 seen from the roster going from working to idle, so it works for every
 session, hook or not; where the Stop hook is installed it's heard a tick
 sooner, and the two are told once. Several at once are said together, never while you're holding the key
@@ -470,7 +471,7 @@ Two files, both optional and both gitignored:
   | `talk_key` | `rightOption` | The push-to-talk key; `PTT_KEY` overrides it |
   | `default_agent_path` | `~` | Where new agents start; bare names are relative to it |
   | `notch_fold_after` | `300` | Seconds of quiet before the pill folds away; 0 keeps it up |
-  | `sounds` | on when voice is off | A system sound for new questions, stuck agents and long turns ending |
+  | `sounds` | off | A system sound for new questions, stuck agents and long turns ending; the speaker next to the notch's status dot toggles it |
 - **`.env`** — the backend's and daemon's environment. Anything below can also
   be set in the shell environment instead.
 

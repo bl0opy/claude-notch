@@ -61,8 +61,8 @@ final class ApprovalTests: XCTestCase {
         XCTAssertEqual(chimes, [.attention], "one going away is quiet")
     }
 
-    func testWithVoiceTheQuestionIsSpokenNotChimed() {
-        let (state, _, _) = makeState(["voice": true])
+    func testWithSoundsAtTheirDefaultNothingChimes() {
+        let (state, _, _) = makeState(["voice": true, "sounds": NSNull()])
         var chimes: [AgentState.Chime] = []
         state.play = { chimes.append($0) }
         state.apply(["type": "approvals", "list": []])
